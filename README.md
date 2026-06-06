@@ -1,54 +1,135 @@
+# Depth Graph Search
 
-🚀 Depth Graph Search
+**Hybrid retrieval engine that bridges semantic search and graph traversal for multi-hop, context-aware information retrieval.**
 
-Depth Graph Search is a hybrid retrieval engine that bridges semantic search and graph traversal to enable multi-hop, context-aware information retrieval.
+Most RAG systems stop at similarity. Depth Graph Search goes further — it navigates relationships. Instead of treating documents as isolated chunks, it models data as a connected graph, unlocking contextual reasoning across linked entities, improved recall for complex queries, and more grounded LLM outputs.
 
-It starts with a high-precision hybrid search layer—combining BM25, dense embeddings, and metadata filtering—to identify the most relevant entry points in a dataset. From there, it performs controlled multi-hop expansion across graph relationships, uncovering deeper connections and latent context that traditional RAG pipelines fail to capture.
-
-This approach transforms retrieval from a flat, document-centric process into a structured, depth-aware exploration of knowledge.
-
----
-
-🧠 Core Idea
-
-Most RAG systems stop at similarity.
-Depth Graph Search goes further: it navigates relationships.
-
-Instead of treating documents as isolated chunks, it models data as a connected graph, enabling:
-
-* contextual reasoning across linked entities
-* improved recall for complex queries
-* more grounded and explainable LLM outputs
+> **Status**: v0.1 in development — architecture and requirements defined, implementation next.
 
 ---
 
-⚙️ Key Capabilities
+## How It Works
 
-* Hybrid Entry Retrieval
-    BM25 + semantic similarity + metadata = high-quality starting nodes
-* Multi-hop Expansion
-    Traverse N levels of relationships with configurable depth and pruning
-* Graph-aware Ranking
-    Combine retrieval scores with structural signals (distance, centrality, edge types)
-* Adaptive Context Building
-    Dynamically construct LLM-ready context based on relevance propagation
-* Backend Agnostic
-    Plug into vector DBs (FAISS, Weaviate), search engines (Elasticsearch), or graph DBs (Neo4j)
+```mermaid
+graph LR
+    subgraph Ingestion
+        T["📄 Text + Metadata"] --> LLM["🤖 LLM Extraction"]
+        LLM --> ER["🔍 Entity Resolution"]
+        ER --> EMB["📐 Embeddings"]
+        EMB --> PG["🐘 PostgreSQL + AGE"]
+    end
+
+    subgraph Search
+        Q["💬 Query"] --> MF{"Metadata\nFilter?"}
+        MF -->|yes| PRE["🏷️ Pre-filter"]
+        MF -->|no| RAG
+        PRE --> RAG["⚡ BM25 + Embeddings\ntop N"]
+        RAG --> BFS["🌐 BFS Traversal\ndepth M"]
+        BFS --> DD["✂️ Deduplicate"]
+        DD --> OUT["📦 Context Package"]
+    end
+
+    PG -.->|"serves"| Search
+```
+
+**Ingest** free text with arbitrary metadata. The engine extracts entities and relationships via LLM, resolves duplicates against the existing graph, generates embeddings, and stores everything in PostgreSQL.
+
+**Search** with a configurable pipeline: optionally pre-filter by metadata, find the top N nodes via hybrid search (BM25 + dense embeddings), then expand M levels deep through graph adjacency. Deduplicate and return a single context package.
 
 ---
 
-🔥 Why it matters
+## Key Capabilities
 
-Traditional RAG:
+| Capability | Description |
+|-----------|-------------|
+| **Hybrid Retrieval** | BM25 full-text + dense vector similarity for high-precision entry points |
+| **Graph Traversal** | BFS expansion from entry nodes with configurable depth |
+| **Entity Resolution** | Deduplicate entities during ingestion to maintain graph quality |
+| **Metadata Pre-filter** | Optional metadata conditions applied before search |
+| **Pipeline as Strategy** | The entire search flow is swappable — bring your own pipeline |
+| **Backend Agnostic Core** | Clean Architecture with ports & adapters — swap any component |
 
-“Find similar chunks.”
+---
 
-Depth Graph Search:
+## Use It Three Ways
 
-“Find relevant knowledge… and everything meaningfully connected to it.”
+| Interface | For | Example |
+|-----------|-----|---------|
+| **SDK** | Python developers embedding search in their apps | `from depth_graph_search import GraphSearch` |
+| **API** | Services consuming search over HTTP | `POST /search` |
+| **CLI** | Quick ingestion and search from the terminal | `dgs search --query "..."` |
 
-That difference is what unlocks:
+All three share the same core — no logic duplication.
 
-* better answers for multi-entity questions
-* deeper reasoning chains
-* less hallucination, more structure
+---
+
+## Quick Start
+
+```bash
+# Clone and start with Docker Compose (includes PostgreSQL + AGE)
+git clone https://github.com/your-user/depth-graph-search.git
+cd depth-graph-search
+docker compose up -d
+
+# Or connect to your own PostgreSQL instance via the SDK
+```
+
+> **v0.1 scope**: Docker Compose and SDK interface are in development.
+
+---
+
+## Documentation
+
+### Architecture
+
+| Document | What you'll find |
+|----------|-----------------|
+| [Overview](docs/architecture/overview.md) | System boundary diagram, Clean Architecture layers, dependency rule |
+| [Layers](docs/architecture/layers.md) | Layer-to-Python-package mapping, domain entities, adapters |
+| [Ports & Adapters](docs/architecture/ports-and-adapters.md) | Every port interface with method signatures, adapter mapping |
+| [Strategies](docs/architecture/strategies.md) | 5-level strategy hierarchy — RAG, traversal, LLM, pipeline, entity resolution |
+
+### Decisions
+
+| Document | What you'll find |
+|----------|-----------------|
+| [ADR-001: PostgreSQL + AGE](docs/architecture/decisions/ADR-001-postgresql-age.md) | Why PostgreSQL over Neo4j, why OpenAI + OpenRouter |
+
+### Requirements
+
+| Document | What you'll find |
+|----------|-----------------|
+| [Functional Requirements](docs/requirements/functional.md) | FR-01 through FR-10 — ingestion, search, interfaces, entity resolution |
+| [Non-Functional Requirements](docs/requirements/non-functional.md) | Extensibility, testability, portability, v0.1 scope |
+
+### Flows
+
+| Document | What you'll find |
+|----------|-----------------|
+| [Ingestion Flow](docs/flows/ingestion.md) | Sequence diagram: text → LLM → entity resolution → embeddings → graph |
+| [Search Flow](docs/flows/search.md) | Sequence diagram: query → pre-filter → RAG → BFS → deduplicated output |
+
+### Conventions
+
+| Document | What you'll find |
+|----------|-----------------|
+| [Branching Strategy](docs/branching-strategy.md) | GitFlow model — branches, naming, rules |
+| [Commit Convention](docs/commit-convention.md) | Conventional Commits — types, scopes, format |
+| [Changelog Convention](docs/changelog-convention.md) | Keep a Changelog — categories, versioning |
+
+---
+
+## Tech Stack
+
+| Component | Technology | Why |
+|-----------|-----------|-----|
+| Language | Python | Ecosystem for ML/NLP, wide adoption |
+| Graph + Vectors | PostgreSQL + AGE + pgvector | One connection = relational + JSON + vectors + graphs |
+| LLM Providers | OpenAI, OpenRouter | Industry standard + wide range including open source |
+| Architecture | Clean Architecture + Strategy Pattern | Swap any component without touching the core |
+
+---
+
+## License
+
+[MIT](LICENSE)
