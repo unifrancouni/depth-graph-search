@@ -18,8 +18,9 @@ Manages persistence and retrieval of Nodes, Edges, and their embeddings in the g
 |--------|------------|-------------|-------------|
 | `save_node` | `node: Node` | `None` | Persist a Node with its embedding and metadata. |
 | `save_edge` | `edge: Edge` | `None` | Persist a directed relationship between two Nodes. |
-| `search_hybrid` | `query_embedding: Embedding`, `query_text: str`, `top_n: int`, `metadata_filter: dict \| None` | `list[Node]` | BM25 + dense vector hybrid search. Returns top N nodes. Applies metadata pre-filter if provided. |
-| `traverse_bfs` | `entry_nodes: list[Node]`, `depth_m: int` | `list[Node]` | BFS traversal from each entry node, expanding up to `depth_m` levels. Returns all reachable nodes (deduplicated). |
+| `get_node` | `node_id: str` | `Node \| None` | Retrieve a Node by its ID. Returns `None` if not found — callers MUST check. |
+| `search_hybrid` | `query_embedding: Embedding`, `query_text: str`, `top_n: int = 5`, `metadata_filter: Metadata \| None = None` | `list[Node]` | BM25 + dense vector hybrid search. Returns top N nodes. Applies metadata pre-filter if provided. |
+| `traverse_bfs` | `entry_nodes: list[Node]`, `depth_m: int = 2` | `list[Node]` | BFS traversal from each entry node, expanding up to `depth_m` levels. Returns all reachable nodes (deduplicated). |
 
 ### `EmbeddingProvider`
 
@@ -36,7 +37,7 @@ Extracts structured entities and relationships from raw text.
 
 | Method | Parameters | Return Type | Description |
 |--------|------------|-------------|-------------|
-| `extract_graph` | `text: str`, `metadata: dict` | `tuple[list[Node], list[Edge]]` | Given raw text and metadata, return extracted nodes and edges. |
+| `extract_graph` | `text: str`, `metadata: Metadata` | `tuple[list[Node], list[Edge]]` | Given raw text and metadata, return extracted nodes and edges. |
 | `complete` | `prompt: str` | `str` | General-purpose text completion. Used for prompt-based extraction fallback. |
 
 ### `SearchPipeline`
@@ -45,9 +46,7 @@ Orchestrates the full search flow. This is a strategy port — the pipeline itse
 
 | Method | Parameters | Return Type | Description |
 |--------|------------|-------------|-------------|
-| `search` | `query: str`, `top_n: int`, `depth_m: int`, `metadata_filter: dict \| None`, `pipeline: str \| None` | `list[ScoredNode]` | Execute the full search pipeline. `pipeline` names an alternate strategy; defaults to `"default"` if omitted. |
-
-> **v0.1 scope**: `ScoredNode` is a data container for `(node: Node, score: float, distance: int)`. It is not yet a typed Python class in code — it is described here as the output specification.
+| `search` | `query: str`, `top_n: int = 5`, `depth_m: int = 2`, `metadata_filter: Metadata \| None = None`, `pipeline: str \| None = None` | `list[ScoredNode]` | Execute the full search pipeline. `pipeline` names an alternate strategy; `None` means use the default. |
 
 ### `EntityResolutionStrategy`
 
@@ -55,19 +54,38 @@ Detects potential duplicate entities during ingestion by searching the existing 
 
 | Method | Parameters | Return Type | Description |
 |--------|------------|-------------|-------------|
-| `resolve` | `nodes: list[Node]`, `threshold: float` | `list[ResolvedNode]` | For each node, find candidates in the existing graph. Return resolved nodes — either matched to existing or marked as new. |
+| `resolve` | `nodes: list[Node]`, `threshold: float = 0.85` | `list[ResolvedNode]` | For each node, find candidates in the existing graph. Returns one `ResolvedNode` per input node — either matched to existing or marked as new. `len(result) == len(nodes)` always holds. |
 
-> **v0.1 scope**: The default implementation reuses the `SearchPipeline` to find candidates via hybrid search. `ResolvedNode` wraps `(node: Node, is_new: bool, matched_id: str | None)`.
+> **v0.1 scope**: The default implementation will reuse the `SearchPipeline` to find candidates via hybrid search (deferred to SDD-04). `ResolvedNode` is a typed `@dataclass(frozen=True)` wrapping `(node: Node, is_new: bool, matched_id: str | None)`.
 
 ## Adapter Mapping
 
-| Adapter | Implements | Technology | Package |
-|---------|------------|------------|---------|
-| `PostgresGraphRepository` | `GraphRepository` | PostgreSQL + AGE + pgvector | `adapters/postgres/` |
-| `OpenAIProvider` | `EmbeddingProvider`, `LLMProvider` | OpenAI API | `adapters/openai/` |
-| `OpenRouterProvider` | `LLMProvider` | OpenRouter API | `adapters/openrouter/` |
+| Adapter | Implements | Technology | Package | Status |
+|---------|------------|------------|---------|--------|
+| `PostgresGraphRepository` | `GraphRepository` | PostgreSQL 17 + AGE 1.6 + pgvector | `adapters/postgres/` | ✅ Implemented (SDD-02) |
+| `OpenAIProvider` | `EmbeddingProvider`, `LLMProvider` | OpenAI API | `adapters/openai/` | ✅ Implemented (SDD-03) |
+| `OpenRouterProvider` | `LLMProvider` | OpenRouter API | `adapters/openrouter/` | ✅ Implemented (SDD-03) |
 
 **Key note on `OpenAIProvider`**: It implements both `EmbeddingProvider` and `LLMProvider`. A single adapter class can implement multiple ports when the underlying service provides both capabilities.
+
+**`OpenAIProvider` implementation notes** (SDD-03):
+- Constructor accepts `api_key: str`, optional `model: str` (default `"gpt-4o"`), optional `embedding_model: str` (default `"text-embedding-3-large"`). Zero I/O.
+- `embed` / `embed_batch`: single API call to `client.embeddings.create(input=[text])`. Batch orders results by `.index`.
+- `extract_graph`: uses OpenAI Structured Outputs (`.parse(response_format=_ExtractionResult)`). Pydantic models are adapter-private (underscore-prefixed). First-wins dedup on entity names; edges with unknown source/target silently skipped.
+- `complete`: returns `choices[0].message.content or ""`.
+- All `openai.OpenAIError` exceptions caught and re-raised as `LLMError` with `__cause__` chaining.
+
+**`OpenRouterProvider` implementation notes** (SDD-03):
+- Implements `LLMProvider` only (no embedding support). Uses `openai.OpenAI(base_url="https://openrouter.ai/api/v1")`.
+- `extract_graph`: uses `response_format={"type": "json_object"}` then `json.loads()` + `_ExtractionResult.model_validate()`. Raises `LLMError` on `JSONDecodeError` or validation failure.
+- Pydantic models duplicated from OpenAI adapter (adapter-private by design — not shared).
+
+**`PostgresGraphRepository` implementation notes** (SDD-02):
+- Constructor accepts an open `psycopg.Connection` — the caller owns the connection lifecycle.
+- `save_node` with `node.embedding = None` writes `NULL` to the DB (valid for nodes without embeddings).
+- `search_hybrid` uses RRF (Reciprocal Rank Fusion, k=60) combining BM25 (GIN/FTS) and pgvector HNSW.
+- `traverse_bfs` uses Cypher `[*0..depth_m]` to include entry nodes in results.
+- All psycopg exceptions are caught and re-raised as `StorageError` with `__cause__` chaining.
 
 Every port has at least one adapter. Every adapter implements at least one port. No orphan interfaces, no orphan implementations.
 

@@ -18,7 +18,7 @@ depth-graph-search has ten functional requirements spanning ingestion, search, a
 | FR-06 | SDK Interface | Python importable library | ✅ |
 | FR-07 | HTTP API Interface | REST service exposing ingestion and search | ✅ |
 | FR-08 | CLI Interface | Command-line tool for ingestion and search | ✅ |
-| FR-09 | Docker Compose | Bundled PostgreSQL for local development | Optional |
+| FR-09 | Docker Compose | Bundled PostgreSQL for local development | ✅ |
 | FR-10 | Entity Resolution | Deduplicate entities during ingestion against existing graph | ✅ |
 
 ---
@@ -178,12 +178,17 @@ depth-graph-search has ten functional requirements spanning ingestion, search, a
 **Description**: Provide a `docker-compose.yml` that starts a PostgreSQL instance with AGE and pgvector pre-configured for local development.
 
 **Behavior**:
-- `docker compose up` gives a ready-to-use PG connection
+- `docker compose up` gives a ready-to-use PG connection (PostgreSQL 17 + Apache AGE 1.6 + pgvector)
 - Developers who already have a PostgreSQL instance MAY skip Docker and configure their connection directly via the SDK
+
+**Delivered files** (SDD-02):
+- `Dockerfile.dev` — `FROM apache/age:release_PG17_1.6.0`, installs `postgresql-17-pgvector`
+- `docker-compose.yml` — postgres service on 5432:5432, named `pgdata` volume, `pg_isready` healthcheck, env: `depth/depth/depth_graph`
+- `docker-init.sql` — runs `CREATE EXTENSION IF NOT EXISTS age; CREATE EXTENSION IF NOT EXISTS vector;` on DB creation
 
 **Optionality**: Docker Compose is a convenience, not a hard requirement. The system MUST work with any PostgreSQL instance that has AGE and pgvector installed.
 
-> **v0.1 scope**: Docker Compose is optional. Developers MAY use their own PostgreSQL instance by passing connection parameters to the SDK adapter.
+> **v0.1 scope**: Docker Compose is implemented (SDD-02). Developers MAY use their own PostgreSQL instance by passing an open `psycopg.Connection` to `PostgresGraphRepository`.
 
 ---
 
