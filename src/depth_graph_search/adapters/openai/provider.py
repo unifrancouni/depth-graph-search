@@ -1,0 +1,278 @@
+"""OpenAIProvider — implements EmbeddingProvider + LLMProvider via the OpenAI Python SDK.
+
+Design decisions:
+- Single class implements both ports: the underlying service provides both capabilities.
+- Extraction uses `.parse()` + Pydantic Structured Outputs (strict schema validation).
+- Pydantic models are private to this module — NEVER exported, NEVER used in core/.
+- Constructor has ZERO side effects: stores config and creates client object only.
+- All openai.OpenAIError subclasses are caught at the adapter boundary and re-raised
+  as LLMError with the original exception as __cause__.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import openai
+from pydantic import BaseModel
+
+from depth_graph_search.core.domain.entities import Edge, Embedding, Metadata, Node
+from depth_graph_search.core.domain.exceptions import LLMError
+from depth_graph_search.core.ports.embedding_provider import EmbeddingProvider
+from depth_graph_search.core.ports.llm_provider import LLMProvider
+
+# ---------------------------------------------------------------------------
+# Private Pydantic models — adapter-private, never exported
+# ---------------------------------------------------------------------------
+
+
+class _ExtractionEntity(BaseModel):
+    name: str
+    type: str
+    properties: dict[str, Any]
+
+
+class _ExtractionRelationship(BaseModel):
+    source: str
+    target: str
+    type: str
+
+
+class _ExtractionResult(BaseModel):
+    entities: list[_ExtractionEntity]
+    relationships: list[_ExtractionRelationship]
+
+
+# ---------------------------------------------------------------------------
+# System prompt constant
+# ---------------------------------------------------------------------------
+
+EXTRACTION_SYSTEM_PROMPT = (
+    "You are a knowledge graph extraction engine. "
+    "Given a text, extract all entities and relationships.\n\n"
+    "Return a JSON object with exactly two keys:\n"
+    '- "entities": a list of objects, each with:\n'
+    '  - "name": the entity name (string, unique within this extraction)\n'
+    '  - "type": the entity type (string, e.g. "Person", "Organization", "Concept")\n'
+    '  - "properties": an object with any additional properties (can be empty {})\n'
+    '- "relationships": a list of objects, each with:\n'
+    '  - "source": the name of the source entity (must match an entity name)\n'
+    '  - "target": the name of the target entity (must match an entity name)\n'
+    '  - "type": the relationship type (string, e.g. "WORKS_AT", "CAUSES", "PART_OF")\n\n'
+    "Rules:\n"
+    "- Entity names must be unique. If the same entity appears multiple times, "
+    "use the same name.\n"
+    "- Relationship source and target must reference entity names from the entities list.\n"
+    '- If no entities are found, return {"entities": [], "relationships": []}.\n'
+    "- Return ONLY the JSON object. No explanation, no markdown, no code fences."
+)
+
+
+# ---------------------------------------------------------------------------
+# Private mapping helper
+# ---------------------------------------------------------------------------
+
+
+def _map_extraction(
+    result: _ExtractionResult,
+    metadata: Metadata,
+) -> tuple[list[Node], list[Edge]]:
+    """Convert _ExtractionResult into domain (Nodes, Edges).
+
+    Entity names become Node.content. Metadata is assembled as:
+    {**caller_metadata, "type": entity.type, "properties": entity.properties}
+
+    First-occurrence wins for duplicate entity names.
+    Relationships referencing unknown entity names are silently skipped.
+    """
+    name_to_node: dict[str, Node] = {}
+    for entity in result.entities:
+        if entity.name not in name_to_node:
+            node = Node(
+                content=entity.name,
+                metadata={**metadata, "type": entity.type, "properties": entity.properties},
+            )
+            name_to_node[entity.name] = node
+
+    edges: list[Edge] = []
+    for rel in result.relationships:
+        src = name_to_node.get(rel.source)
+        tgt = name_to_node.get(rel.target)
+        if src is None or tgt is None:
+            continue  # skip edges with unknown entity references
+        edges.append(
+            Edge(
+                source_id=src.id,
+                target_id=tgt.id,
+                relationship=rel.type,
+            )
+        )
+
+    return list(name_to_node.values()), edges
+
+
+# ---------------------------------------------------------------------------
+# OpenAIProvider
+# ---------------------------------------------------------------------------
+
+
+class OpenAIProvider(EmbeddingProvider, LLMProvider):
+    """Adapter implementing EmbeddingProvider + LLMProvider via the OpenAI Python SDK.
+
+    Args:
+        api_key: OpenAI API key.
+        model: Chat completion model. Defaults to "gpt-4o".
+        embedding_model: Embedding model. Defaults to "text-embedding-3-large".
+
+    Note:
+        The constructor performs ZERO I/O. It stores config and creates the client object
+        (which is also side-effect-free until an API call is made).
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gpt-4o",
+        embedding_model: str = "text-embedding-3-large",
+    ) -> None:
+        self._client = openai.OpenAI(api_key=api_key)
+        self._model = model
+        self._embedding_model = embedding_model
+
+    @property
+    def model(self) -> str:
+        """Chat completion model identifier."""
+        return self._model
+
+    @property
+    def embedding_model(self) -> str:
+        """Embedding model identifier."""
+        return self._embedding_model
+
+    # ------------------------------------------------------------------
+    # EmbeddingProvider
+    # ------------------------------------------------------------------
+
+    def embed(self, text: str) -> Embedding:
+        """Generate a single embedding for the given text.
+
+        Args:
+            text: The input text to embed.
+
+        Returns:
+            An Embedding with vector, model, and dimensions set.
+
+        Raises:
+            LLMError: On any OpenAI API error.
+        """
+        try:
+            response = self._client.embeddings.create(
+                model=self._embedding_model,
+                input=[text],
+            )
+            data = response.data[0]
+            return Embedding(
+                vector=data.embedding,
+                model=self._embedding_model,
+                dimensions=len(data.embedding),
+            )
+        except openai.OpenAIError as exc:
+            raise LLMError("Embedding failed") from exc
+
+    def embed_batch(self, texts: list[str]) -> list[Embedding]:
+        """Generate embeddings for a batch of texts in a single API call.
+
+        Order is preserved: result[i] corresponds to texts[i].
+
+        Args:
+            texts: List of input texts to embed.
+
+        Returns:
+            List of Embedding instances in the same order as texts.
+
+        Raises:
+            LLMError: On any OpenAI API error.
+        """
+        try:
+            response = self._client.embeddings.create(
+                model=self._embedding_model,
+                input=texts,
+            )
+            # API returns data ordered by index — sort to be safe
+            sorted_data = sorted(response.data, key=lambda d: d.index)
+            return [
+                Embedding(
+                    vector=d.embedding,
+                    model=self._embedding_model,
+                    dimensions=len(d.embedding),
+                )
+                for d in sorted_data
+            ]
+        except openai.OpenAIError as exc:
+            raise LLMError("Batch embedding failed") from exc
+
+    # ------------------------------------------------------------------
+    # LLMProvider
+    # ------------------------------------------------------------------
+
+    def extract_graph(
+        self,
+        text: str,
+        metadata: Metadata,
+    ) -> tuple[list[Node], list[Edge]]:
+        """Extract a knowledge graph from unstructured text using Structured Outputs.
+
+        Uses .parse() with _ExtractionResult as the response_format schema.
+        Checks for model refusal and unparseable responses.
+
+        Args:
+            text: Raw text to extract entities and relationships from.
+            metadata: Key-value context attached to each extracted Node.
+
+        Returns:
+            Tuple (nodes, edges). Empty ([], []) is valid when no entities found.
+
+        Raises:
+            LLMError: On API error, model refusal, or unparseable response.
+        """
+        try:
+            completion = self._client.chat.completions.parse(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                    {"role": "user", "content": text},
+                ],
+                response_format=_ExtractionResult,
+            )
+        except openai.OpenAIError as exc:
+            raise LLMError("Graph extraction failed") from exc
+
+        message = completion.choices[0].message
+        if message.refusal is not None:
+            raise LLMError(f"Model refused extraction: {message.refusal}")
+        if message.parsed is None:
+            raise LLMError("Model returned unparseable response")
+
+        return _map_extraction(message.parsed, metadata)
+
+    def complete(self, prompt: str) -> str:
+        """General-purpose text completion.
+
+        Args:
+            prompt: The full prompt to send to the model.
+
+        Returns:
+            Raw string output from the model.
+
+        Raises:
+            LLMError: On any OpenAI API error.
+        """
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            content = response.choices[0].message.content
+            return content or ""
+        except openai.OpenAIError as exc:
+            raise LLMError("Completion failed") from exc
