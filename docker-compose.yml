@@ -1,0 +1,21 @@
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: depth
+      POSTGRES_PASSWORD: depth
+      POSTGRES_DB: depth_graph
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U depth -d depth_graph"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
