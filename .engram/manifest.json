@@ -16,6 +16,22 @@
       "sessions": 4,
       "memories": 39,
       "prompts": 35
+    },
+    {
+      "id": "474553ae",
+      "created_by": "francougarte",
+      "created_at": "2026-06-09T22:45:11Z",
+      "sessions": 1,
+      "memories": 11,
+      "prompts": 8
+    },
+    {
+      "id": "42198585",
+      "created_by": "francougarte",
+      "created_at": "2026-06-09T23:49:19Z",
+      "sessions": 0,
+      "memories": 1,
+      "prompts": 0
     }
   ]
 }
