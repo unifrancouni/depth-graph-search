@@ -20,6 +20,7 @@ graph TD
         PGR[adapters/postgres/]
         OAI[adapters/openai/]
         ORI[adapters/openrouter/]
+        SRH[adapters/search/]
     end
 
     subgraph AppPorts["Ports — core/ports/"]
@@ -45,6 +46,7 @@ graph TD
     PGR --> AppPorts
     OAI --> AppPorts
     ORI --> AppPorts
+    SRH --> AppPorts
     AppPorts --> Domain
 ```
 
@@ -57,7 +59,7 @@ graph TD
 | **Delivery — API** | `api/` | `core/ports/`, `core/domain/` |
 | **Delivery — CLI** | `cli/` | `core/ports/`, `core/domain/` |
 
-> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02). `adapters/openai/` and `adapters/openrouter/` are fully implemented (SDD-03). Delivery surfaces (`sdk/`, `api/`, `cli/`) are stubbed — deferred to SDD-06+.
+> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02). `adapters/openai/` and `adapters/openrouter/` are fully implemented (SDD-03). `adapters/search/` is fully implemented (SDD-04) — `DefaultSearchPipeline` and `DefaultEntityResolutionStrategy` close all open port adapters. Delivery surfaces (`sdk/`, `api/`, `cli/`) are stubbed — deferred to SDD-06+.
 
 ## Domain Entities
 
@@ -83,12 +85,18 @@ Adapters are the only layer that talks to the outside world. Each adapter implem
 | `PostgresGraphRepository` | `GraphRepository` | PostgreSQL 17 + Apache AGE 1.6 + pgvector | ✅ Implemented (SDD-02) |
 | `OpenAIProvider` | `EmbeddingProvider`, `LLMProvider` | OpenAI API | ✅ Implemented (SDD-03) |
 | `OpenRouterProvider` | `LLMProvider` | OpenRouter API | ✅ Implemented (SDD-03) |
+| `DefaultSearchPipeline` | `SearchPipeline` | Pure Python Orchestrator | ✅ Implemented (SDD-04) |
+| `DefaultEntityResolutionStrategy` | `EntityResolutionStrategy` | Pure Python Orchestrator | ✅ Implemented (SDD-04) |
 
 **`PostgresGraphRepository`** lives in `src/depth_graph_search/adapters/postgres/`. It uses dual-write: SQL `nodes` table (content, embedding, metadata, full-text search) + AGE graph (topology). The Docker dev stack (`Dockerfile.dev`, `docker-compose.yml`, `docker-init.sql`) provides a ready-to-use PostgreSQL 17 + AGE + pgvector environment.
 
 **`OpenAIProvider`** lives in `src/depth_graph_search/adapters/openai/`. Single class implementing both `EmbeddingProvider` and `LLMProvider`. Uses the `openai` SDK with Structured Outputs (`.parse()`) for entity extraction. Dependencies: `openai>=1.0`, `pydantic>=2.0`.
 
 **`OpenRouterProvider`** lives in `src/depth_graph_search/adapters/openrouter/`. Implements `LLMProvider` only (no embeddings). Uses the `openai` SDK with `base_url="https://openrouter.ai/api/v1"` and `json_object` response format for extraction.
+
+**`DefaultSearchPipeline`** lives in `src/depth_graph_search/adapters/search/`. Implements `SearchPipeline`. Pure Python orchestrator — no external dependencies. Five-step algorithm: embed query → hybrid search → BFS expand → dedup by node ID → score and sort. Rank-score formula: `1.0 - rank / (top_n + 1)`. BFS-only nodes score `0.0`. Errors from injected ports propagate unmodified.
+
+**`DefaultEntityResolutionStrategy`** lives in `src/depth_graph_search/adapters/search/`. Implements `EntityResolutionStrategy`. Pure Python — wraps a `SearchPipeline` (the ABC, not the concrete class). For each input node, searches with `top_n=1, depth_m=0`. Score `>= threshold` → existing match; otherwise → new entity. `len(result) == len(nodes)` always holds.
 
 **Rule**: A new integration (e.g., a Pinecone vector store) is added by creating a new adapter under `adapters/` that implements the relevant port. Core code is never modified.
 

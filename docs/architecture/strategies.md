@@ -137,7 +137,7 @@ results = search(query="...", pipeline="my-dfs-pipeline")
 
 **Registration**: Custom pipelines are registered at application initialization by injecting them into the delivery surface's dependency container. The `pipeline` parameter in `SearchPipeline.search()` resolves to the registered implementation.
 
-> **v0.1 scope**: The pipeline registry (named strategy lookup) is specified here but not yet implemented. v0.1 ships one pipeline: `"default"`. Custom pipeline authoring requires code contribution.
+> **v0.1 scope**: `DefaultSearchPipeline` is implemented (SDD-04). The pipeline registry (named strategy lookup) is NOT yet implemented — `pipeline` parameter is accepted but silently ignored if any value other than `None` is passed. v0.1 ships one pipeline: `"default"`. Custom pipeline authoring requires code contribution.
 
 ## Level 5 — Entity Resolution Strategy
 
@@ -154,7 +154,7 @@ results = search(query="...", pipeline="my-dfs-pipeline")
 
 **Why it reuses search**: The search engine is already optimized for finding similar nodes. Using it for entity resolution avoids duplicating retrieval logic and ensures consistency — the same algorithm that finds relevant nodes for queries also detects duplicates during ingestion.
 
-> **v0.1 scope**: Entity resolution is best-effort. False negatives (missed duplicates) are possible. The similarity threshold is configurable but not auto-tuned. Custom strategies can improve precision for specific domains.
+> **v0.1 scope**: `DefaultEntityResolutionStrategy` is implemented (SDD-04). Entity resolution is best-effort. False negatives (missed duplicates) are possible. The similarity threshold is configurable but not auto-tuned. Custom strategies can improve precision for specific domains.
 
 ## See Also
 

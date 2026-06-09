@@ -65,6 +65,8 @@ Detects potential duplicate entities during ingestion by searching the existing 
 | `PostgresGraphRepository` | `GraphRepository` | PostgreSQL 17 + AGE 1.6 + pgvector | `adapters/postgres/` | ✅ Implemented (SDD-02) |
 | `OpenAIProvider` | `EmbeddingProvider`, `LLMProvider` | OpenAI API | `adapters/openai/` | ✅ Implemented (SDD-03) |
 | `OpenRouterProvider` | `LLMProvider` | OpenRouter API | `adapters/openrouter/` | ✅ Implemented (SDD-03) |
+| `DefaultSearchPipeline` | `SearchPipeline` | Pure Python Orchestrator | `adapters/search/` | ✅ Implemented (SDD-04) |
+| `DefaultEntityResolutionStrategy` | `EntityResolutionStrategy` | Pure Python Orchestrator | `adapters/search/` | ✅ Implemented (SDD-04) |
 
 **Key note on `OpenAIProvider`**: It implements both `EmbeddingProvider` and `LLMProvider`. A single adapter class can implement multiple ports when the underlying service provides both capabilities.
 
@@ -86,6 +88,19 @@ Detects potential duplicate entities during ingestion by searching the existing 
 - `search_hybrid` uses RRF (Reciprocal Rank Fusion, k=60) combining BM25 (GIN/FTS) and pgvector HNSW.
 - `traverse_bfs` uses Cypher `[*0..depth_m]` to include entry nodes in results.
 - All psycopg exceptions are caught and re-raised as `StorageError` with `__cause__` chaining.
+
+**`DefaultSearchPipeline` implementation notes** (SDD-04):
+- Constructor accepts `graph_repository: GraphRepository` and `embedding_provider: EmbeddingProvider`. Zero I/O.
+- Five-step algorithm: (1) embed query, (2) hybrid search → entry nodes, (3) early-return `[]` if empty, (4) BFS expand, (5) dedup by `node.id` (entry-first, dict-based), score with rank formula `1.0 - rank / (top_n + 1)`, sort score DESC / distance ASC, return `[:top_n]`.
+- BFS-only nodes receive `score=0.0, distance=1`; entry nodes receive `distance=0`.
+- `pipeline` parameter accepted and silently ignored in v0.1 (no registry yet).
+- `StorageError` and `LLMError` from injected ports propagate unmodified — no catch blocks.
+
+**`DefaultEntityResolutionStrategy` implementation notes** (SDD-04):
+- Constructor accepts `pipeline: SearchPipeline` (the ABC — decoupled from `DefaultSearchPipeline`). Zero I/O.
+- Threshold loop: for each node, calls `pipeline.search(node.content, top_n=1, depth_m=0)`. Score `>= threshold` → `ResolvedNode(is_new=False, matched_id=...)`. Otherwise → `ResolvedNode(is_new=True, matched_id=None)`.
+- `len(result) == len(nodes)` holds structurally — one `ResolvedNode` per input, always.
+- `StorageError` from pipeline propagates unmodified — no catch blocks.
 
 Every port has at least one adapter. Every adapter implements at least one port. No orphan interfaces, no orphan implementations.
 

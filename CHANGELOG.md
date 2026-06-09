@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (SDD-04 — Search Pipeline + Entity Resolution)
+
+- **SDD-04 — Search Pipeline + Entity Resolution** (`src/depth_graph_search/adapters/search/`): two pure-Python orchestrator adapters closing the last two open ports — all 5 ABCs now have concrete implementations
+- `adapters/search/pipeline.py` — `DefaultSearchPipeline` (116 LOC): implements `SearchPipeline`; five-step algorithm: embed query → hybrid search → early-return if empty → BFS expand → dedup by `node.id` (entry-first) → rank-score formula `1.0 - rank / (top_n + 1)` → sort score DESC / distance ASC → return `[:top_n]`; BFS-only nodes receive `score=0.0, distance=1`; `pipeline` parameter accepted and silently ignored; zero catch blocks — `StorageError`/`LLMError` propagate unmodified
+- `adapters/search/entity_resolution.py` — `DefaultEntityResolutionStrategy` (77 LOC): implements `EntityResolutionStrategy`; wraps a `SearchPipeline` ABC (decoupled from concrete class); for each node calls `pipeline.search(node.content, top_n=1, depth_m=0)`; score `>= threshold` → `ResolvedNode(is_new=False, matched_id=...)`; otherwise → `ResolvedNode(is_new=True, matched_id=None)`; `len(result) == len(nodes)` holds structurally; zero catch blocks
+- `adapters/search/__init__.py` — exports `DefaultSearchPipeline`, `DefaultEntityResolutionStrategy`
+- `tests/unit/adapters/test_search_pipeline.py` — 18 unit tests: constructor (stored deps, isinstance, no side effects), happy path (scored nodes, distance-0 entry, distance-1 BFS, top_n cap), empty/edge cases (empty result, skips BFS, depth_m=0), scoring/ordering (rank-0=1.0, rank-1≈0.833, score-DESC/distance-ASC, metadata_filter passthrough), deduplication (entry-first wins), error propagation (StorageError, LLMError)
+- `tests/unit/adapters/test_entity_resolution.py` — 12 unit tests: constructor (stored pipeline, isinstance), matching (above threshold → not new, below → new, empty result → new), edge cases (empty input, pipeline never called, output order, len invariant, threshold=0.0, threshold=1.0), error propagation (StorageError)
+- **134 total tests passing** (30 new search adapter tests + 104 pre-existing; 19 integration errors — Docker not running, pre-existing SDD-02 condition)
+- **100% code coverage** on `adapters/search/` (44/44 statements)
+
+---
+
 ### Added (SDD-03 — OpenAI + OpenRouter LLM Adapters)
 
 - **SDD-03 — OpenAI + OpenRouter LLM Adapters** (`src/depth_graph_search/adapters/openai/`, `src/depth_graph_search/adapters/openrouter/`): two concrete LLM adapter implementations completing the adapter layer for all currently specified ports

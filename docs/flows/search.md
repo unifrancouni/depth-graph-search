@@ -101,7 +101,7 @@ The list is ordered by: `score` descending, then `distance` ascending (closer no
 
 Entry nodes (distance 0) always appear before BFS-expanded nodes of the same score. This ordering reflects semantic relevance first, structural proximity second.
 
-> **v0.1 scope**: Score normalization between BM25 and cosine similarity is not specified. The raw combined score is implementation-defined. Output ordering may change as scoring is refined.
+> **v0.1 scope**: `DefaultSearchPipeline` is fully implemented (SDD-04) — rank-score formula `1.0 - rank / (top_n + 1)`, dedup by `node.id` (entry-first), sort by score DESC / distance ASC. Score normalization between BM25 and cosine similarity is not specified. The raw combined score from `PostgresGraphRepository` is implementation-defined. Output ordering may change as scoring is refined.
 
 ## Pipeline Selection
 
@@ -121,7 +121,7 @@ results = search(
 
 The custom pipeline must implement the `SearchPipeline` port. See [Strategies](../architecture/strategies.md#custom-pipeline-extension) for the extension guide.
 
-> **v0.1 scope**: The pipeline registry (named strategy lookup) is not yet implemented. Only `"default"` is available in v0.1. The `pipeline` parameter is accepted but ignored if passed any other value.
+> **v0.1 scope**: The pipeline registry (named strategy lookup) is not yet implemented (deferred to SDD-06). Only the default pipeline is available in v0.1. The `pipeline` parameter is accepted by `DefaultSearchPipeline` but silently ignored.
 
 ## See Also
 
