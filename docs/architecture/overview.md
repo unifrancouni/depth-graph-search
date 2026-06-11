@@ -59,16 +59,22 @@ The dependency rule is enforced by convention in v0.1 (no import linter yet). An
 
 ## v0.1 Scope
 
-> **v0.1 scope**: This release establishes the architecture documentation. No production code is shipped yet. The docs below define the contracts that code must satisfy.
+> **v0.1 scope**: Architecture, domain, all 6 ports, all adapters, and the SDK delivery surface are fully implemented. The ingestion pipeline (`DefaultIngestionPipeline`) and search pipeline (`DefaultSearchPipeline`) are both production-ready. `api/` and `cli/` surfaces are stubbed — deferred to SDD-06+.
 
-**Included in v0.1 documentation:**
+**Implemented in v0.1:**
 - 4 architecture docs (overview, layers, ports-and-adapters, strategies)
 - 1 decision record (ADR-001: PostgreSQL + AGE)
-- 2 requirements docs (functional FR-01–FR-09, non-functional)
+- 2 requirements docs (functional FR-01–FR-10, non-functional)
 - 2 flow docs (ingestion, search)
+- Domain layer: `Node`, `Edge`, `Embedding`, `Metadata`, `ScoredNode`, `ResolvedNode`, `IngestionResult` (SDD-01, SDD-05)
+- All 6 port ABCs: `GraphRepository`, `EmbeddingProvider`, `LLMProvider`, `SearchPipeline`, `EntityResolutionStrategy`, `IngestionPipeline` (SDD-01 through SDD-05)
+- All adapters: `PostgresGraphRepository`, `OpenAIProvider`, `OpenRouterProvider`, `DefaultSearchPipeline`, `DefaultEntityResolutionStrategy`, `DefaultIngestionPipeline` (SDD-02 through SDD-05)
+- SDK surface: `from depth_graph_search import IngestionPipeline, DefaultIngestionPipeline, IngestionResult` — all importable (SDD-05)
+- Reusable test mock adapters: `InMemoryGraphRepository`, `FakeLLMProvider`, `FakeEmbeddingProvider`, `FakeEntityResolutionStrategy` in `tests/mocks/` (SDD-05)
+- 154 unit tests passing
 
 **Explicitly excluded from v0.1:**
-- Source code implementation
+- `api/` and `cli/` delivery surfaces (SDD-06+)
 - Packaging / PyPI distribution
 - Performance benchmarks or SLAs
 - Authentication / authorization

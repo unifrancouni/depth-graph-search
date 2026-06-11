@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (SDD-05 — Ingestion Pipeline + Mocks + Tests)
+
+- **SDD-05 — Ingestion Pipeline + Mocks + Tests**: `DefaultIngestionPipeline` completes the ingestion port, `IngestionResult` domain value object added, 4 ABC-compliant mock adapters created, 18 new unit tests — all 152 unit tests passing
+- `core/domain/entities.py` — `IngestionResult` frozen dataclass (`node_count: int`, `edge_count: int`) added alongside `ScoredNode` and `ResolvedNode`; reusable across SDK/API/CLI
+- `core/ports/ingestion_pipeline.py` — `IngestionPipeline` ABC with `ingest(text, metadata=None) -> IngestionResult`; raises `ValidationError` (blank input) or `IngestionError` (port failures)
+- `core/ports/__init__.py` — `IngestionPipeline` added to exports
+- `adapters/ingestion/pipeline.py` — `DefaultIngestionPipeline` (110 LOC): implements 4-stage flow: validate → `llm.extract_graph()` → `embedding.embed_batch()` + `dataclasses.replace()` → `entity_resolution.resolve()` + id_map edge rewiring → `save_node` (is_new=True only) + `save_edge` → `IngestionResult`; all port errors wrapped as `IngestionError(cause=exc)` via `raise ... from exc`; empty extraction fast-path returns `IngestionResult(0, 0)` immediately; metadata defaults to `{}` when `None`
+- `adapters/ingestion/__init__.py` — re-exports `DefaultIngestionPipeline`
+- `sdk/__init__.py` — now exports `DefaultIngestionPipeline` and `DefaultSearchPipeline` (SDK surface activated)
+- `src/depth_graph_search/__init__.py` — `IngestionPipeline`, `DefaultIngestionPipeline`, `IngestionResult`, `DefaultSearchPipeline` added to top-level `__all__`
+- `tests/mocks/__init__.py` — new package; re-exports all 4 fakes
+- `tests/mocks/graph_repository.py` — `InMemoryGraphRepository(GraphRepository)`: dict-backed `_nodes`/`_edges`; `save_node`, `save_edge`, `get_node`, `search_hybrid` (preset via `set_search_results`), `traverse_bfs` (stub → `[]`); `set_error(exc)` error injection; `call_count(method)` / `calls(method)` tracking
+- `tests/mocks/llm_provider.py` — `FakeLLMProvider(LLMProvider)`: preset via `set_extraction(nodes, edges)`; stub `complete`; error injection + call tracking
+- `tests/mocks/embedding_provider.py` — `FakeEmbeddingProvider(EmbeddingProvider)`: preset via `set_embeddings([emb1, ...])` with fallback repeat; error injection + call tracking
+- `tests/mocks/entity_resolution.py` — `FakeEntityResolutionStrategy(EntityResolutionStrategy)`: three modes — `set_all_new()`, `set_all_matched(matched_id)`, `set_custom(resolved_nodes)`; error injection + call tracking
+- `tests/unit/conftest.py` — shared fixtures (`fake_llm`, `fake_embedder`, `fake_repo`, `fake_resolver`, `pipeline`) + entity factories (`make_node`, `make_edge`, `make_embedding`)
+- `tests/unit/test_ingestion_pipeline.py` — 18 unit tests covering: ABC compliance, missing dependency TypeError, empty/whitespace ValidationError, valid text accepted, happy path full flow (2 nodes 1 edge), embed_batch contents, empty extraction zero result, metadata forwarding, matched entity edges rewired, matched entity not saved, new entity saved, LLM error no writes, storage error propagation, IngestionResult immutability, result counts match, top-level import
+- **Post-verify fixes** (W-01 + W-02): spec updated to document empty-extraction fast-path as correct behavior (`embed_batch` NOT called on empty extraction); `DefaultIngestionPipeline` now guarantees caller `metadata` is merged onto every node via `{**metadata, **node.metadata}` before persistence — 2 additional tests added
+- **154 total tests passing** (20 new ingestion tests + 134 pre-existing; 0 failed, 0 skipped)
+
+---
+
 ### Added (SDD-04 — Search Pipeline + Entity Resolution)
 
 - **SDD-04 — Search Pipeline + Entity Resolution** (`src/depth_graph_search/adapters/search/`): two pure-Python orchestrator adapters closing the last two open ports — all 5 ABCs now have concrete implementations

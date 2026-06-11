@@ -26,10 +26,16 @@ sequenceDiagram
     end
 
     LLM-->>SDK: (nodes[], edges[])
+
+    alt Empty extraction (no entities found)
+        SDK-->>C: IngestionResult(node_count=0, edge_count=0)
+    end
+
     SDK->>EMB: embed_batch(node contents)
 
     EMB-->>SDK: embeddings[]
-    SDK->>SDK: attach embeddings + metadata to nodes
+    SDK->>SDK: attach embeddings to nodes
+    SDK->>SDK: merge caller metadata onto every node ({**metadata, **node.metadata})
 
     Note over SDK,GR: Entity Resolution — deduplicate against existing graph
     SDK->>SDK: resolve_entities(nodes[], strategy)
@@ -85,7 +91,7 @@ Metadata in depth-graph-search is intentionally schema-free:
 
 - **Format**: Arbitrary key-value pairs (`dict`). Any JSON-serializable value is accepted.
 - **Storage**: Stored as `jsonb` on each Node in PostgreSQL. The graph schema imposes no field constraints.
-- **At ingestion**: Metadata is passed through LLM extraction unchanged and attached to every Node extracted from the text. The LLM does not modify metadata — it reads it for extraction context only.
+- **At ingestion**: Metadata is passed to `LLMProvider.extract_graph()` as context. Additionally, the pipeline GUARANTEES that caller-supplied metadata is merged onto every node before persistence — `{**metadata, **node.metadata}`. Node-level metadata keys (set by the LLM adapter) take precedence over caller-supplied keys on conflict. This guarantee is enforced at the pipeline level, not delegated to the LLM adapter.
 - **For pre-filtering**: Metadata is queryable after ingestion via `metadata_filter` in the search flow. See [Search Flow](./search.md) and [FR-02](../requirements/functional.md#fr-02--metadata-pre-filter).
 
 **Example**:

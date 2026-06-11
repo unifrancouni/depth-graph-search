@@ -56,7 +56,17 @@ Detects potential duplicate entities during ingestion by searching the existing 
 |--------|------------|-------------|-------------|
 | `resolve` | `nodes: list[Node]`, `threshold: float = 0.85` | `list[ResolvedNode]` | For each node, find candidates in the existing graph. Returns one `ResolvedNode` per input node — either matched to existing or marked as new. `len(result) == len(nodes)` always holds. |
 
-> **v0.1 scope**: The default implementation will reuse the `SearchPipeline` to find candidates via hybrid search (deferred to SDD-04). `ResolvedNode` is a typed `@dataclass(frozen=True)` wrapping `(node: Node, is_new: bool, matched_id: str | None)`.
+> **v0.1 scope**: `DefaultEntityResolutionStrategy` reuses the `SearchPipeline` to find candidates via hybrid search (SDD-04). `ResolvedNode` is a typed `@dataclass(frozen=True)` wrapping `(node: Node, is_new: bool, matched_id: str | None)`.
+
+### `IngestionPipeline`
+
+Orchestrates the full ingestion flow. This is a strategy port — the pipeline itself is swappable.
+
+| Method | Parameters | Return Type | Description |
+|--------|------------|-------------|-------------|
+| `ingest` | `text: str`, `metadata: Metadata \| None = None` | `IngestionResult` | Execute the full ingestion pipeline. Raises `ValidationError` on blank input; raises `IngestionError` (with `__cause__`) on port failures. |
+
+> **v0.1 scope**: `DefaultIngestionPipeline` implements the 4-stage flow: validate → LLM extract → embed → entity resolve + edge rewire → persist → return `IngestionResult`. Empty extraction fast-paths to `IngestionResult(0, 0)` without calling `embed_batch`. Caller-supplied `metadata` is merged onto every persisted node (`{**metadata, **node.metadata}`) — node-level keys take precedence.
 
 ## Adapter Mapping
 
@@ -67,6 +77,7 @@ Detects potential duplicate entities during ingestion by searching the existing 
 | `OpenRouterProvider` | `LLMProvider` | OpenRouter API | `adapters/openrouter/` | ✅ Implemented (SDD-03) |
 | `DefaultSearchPipeline` | `SearchPipeline` | Pure Python Orchestrator | `adapters/search/` | ✅ Implemented (SDD-04) |
 | `DefaultEntityResolutionStrategy` | `EntityResolutionStrategy` | Pure Python Orchestrator | `adapters/search/` | ✅ Implemented (SDD-04) |
+| `DefaultIngestionPipeline` | `IngestionPipeline` | Pure Python Orchestrator | `adapters/ingestion/` | ✅ Implemented (SDD-05) |
 
 **Key note on `OpenAIProvider`**: It implements both `EmbeddingProvider` and `LLMProvider`. A single adapter class can implement multiple ports when the underlying service provides both capabilities.
 
@@ -101,6 +112,13 @@ Detects potential duplicate entities during ingestion by searching the existing 
 - Threshold loop: for each node, calls `pipeline.search(node.content, top_n=1, depth_m=0)`. Score `>= threshold` → `ResolvedNode(is_new=False, matched_id=...)`. Otherwise → `ResolvedNode(is_new=True, matched_id=None)`.
 - `len(result) == len(nodes)` holds structurally — one `ResolvedNode` per input, always.
 - `StorageError` from pipeline propagates unmodified — no catch blocks.
+
+**`DefaultIngestionPipeline` implementation notes** (SDD-05):
+- Constructor accepts all 4 port dependencies: `llm_provider: LLMProvider`, `embedding_provider: EmbeddingProvider`, `graph_repository: GraphRepository`, `entity_resolution: EntityResolutionStrategy`. No defaults — all required.
+- Six-step flow: (1) validate `text.strip() == ""` → `ValidationError`; (2) `llm.extract_graph(text, metadata)` → `(nodes, edges)` — `LLMError` wrapped as `IngestionError`; empty result → `IngestionResult(0, 0)` immediately (fast-path); (3) `embedding.embed_batch([n.content for n in nodes])` → attach via `dataclasses.replace(node, embedding=emb)`; (4) `entity_resolution.resolve(nodes)` → build `id_map = {r.node.id: r.matched_id for r in resolved if not r.is_new}`; (5) rewire edges via `id_map` using `dataclasses.replace(edge, source_id=..., target_id=...)`; (6) `save_node` for `is_new=True` nodes only; `save_edge` for all rewired edges — `StorageError` wrapped as `IngestionError`.
+- Metadata guarantee: caller-supplied `metadata` is merged onto every node before persistence using `{**metadata, **node.metadata}` — node-level keys take precedence over caller-supplied keys on conflict.
+- All port errors use `raise IngestionError(...) from exc` — `__cause__` chain is always set.
+- `dataclasses.replace()` is used throughout — frozen dataclasses are never mutated in-place.
 
 Every port has at least one adapter. Every adapter implements at least one port. No orphan interfaces, no orphan implementations.
 

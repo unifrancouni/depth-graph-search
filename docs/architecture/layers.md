@@ -21,6 +21,7 @@ graph TD
         OAI[adapters/openai/]
         ORI[adapters/openrouter/]
         SRH[adapters/search/]
+        ING[adapters/ingestion/]
     end
 
     subgraph AppPorts["Ports — core/ports/"]
@@ -29,6 +30,7 @@ graph TD
         LLP[LLMProvider]
         SPS[SearchPipeline]
         ERS[EntityResolutionStrategy]
+        IGP[IngestionPipeline]
     end
 
     subgraph Domain["Domain — core/domain/"]
@@ -38,6 +40,7 @@ graph TD
         Meta[Metadata]
         SN[ScoredNode]
         RN[ResolvedNode]
+        IR[IngestionResult]
     end
 
     SDK --> AppPorts
@@ -47,6 +50,7 @@ graph TD
     OAI --> AppPorts
     ORI --> AppPorts
     SRH --> AppPorts
+    ING --> AppPorts
     AppPorts --> Domain
 ```
 
@@ -59,11 +63,11 @@ graph TD
 | **Delivery — API** | `api/` | `core/ports/`, `core/domain/` |
 | **Delivery — CLI** | `cli/` | `core/ports/`, `core/domain/` |
 
-> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02). `adapters/openai/` and `adapters/openrouter/` are fully implemented (SDD-03). `adapters/search/` is fully implemented (SDD-04) — `DefaultSearchPipeline` and `DefaultEntityResolutionStrategy` close all open port adapters. Delivery surfaces (`sdk/`, `api/`, `cli/`) are stubbed — deferred to SDD-06+.
+> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02). `adapters/openai/` and `adapters/openrouter/` are fully implemented (SDD-03). `adapters/search/` is fully implemented (SDD-04) — `DefaultSearchPipeline` and `DefaultEntityResolutionStrategy` close the search port. `adapters/ingestion/` is fully implemented (SDD-05) — `DefaultIngestionPipeline` completes the ingestion pipeline port and implements the full 4-stage ingestion flow. **SDK delivery surface** (`sdk/`) is now active — exports `DefaultIngestionPipeline` and `DefaultSearchPipeline`. `api/` and `cli/` are stubbed — deferred to SDD-06+.
 
 ## Domain Entities
 
-The domain layer defines six entity types. They carry no database or HTTP logic — they are plain data containers implemented as `@dataclass(frozen=True)` with zero external dependencies.
+The domain layer defines seven entity types. They carry no database or HTTP logic — they are plain data containers implemented as `@dataclass(frozen=True)` with zero external dependencies.
 
 | Entity | Type | Description |
 |--------|------|-------------|
@@ -73,6 +77,7 @@ The domain layer defines six entity types. They carry no database or HTTP logic 
 | **Metadata** | `TypeAlias = dict[str, Any]` | Free-form key-value pairs attached to a Node at ingestion time. No fixed schema — any JSON-serializable dict is valid. |
 | **ScoredNode** | `@dataclass(frozen=True)` | Output of a search — wraps `(node: Node, score: float, distance: int)`. Results ordered by score descending, distance ascending. |
 | **ResolvedNode** | `@dataclass(frozen=True)` | Output of entity resolution — wraps `(node: Node, is_new: bool, matched_id: str \| None)`. Marks whether the node matched an existing graph entry. |
+| **IngestionResult** | `@dataclass(frozen=True)` | Output of an ingestion run — wraps `(node_count: int, edge_count: int)`. Reusable across SDK, API, and CLI layers. Added in SDD-05. |
 
 Domain entities are immutable — `frozen=True` enforces this at runtime. Adapters may persist them but never mutate their fields. The domain generates all entity IDs (uuid4) — databases never assign IDs.
 
@@ -87,6 +92,7 @@ Adapters are the only layer that talks to the outside world. Each adapter implem
 | `OpenRouterProvider` | `LLMProvider` | OpenRouter API | ✅ Implemented (SDD-03) |
 | `DefaultSearchPipeline` | `SearchPipeline` | Pure Python Orchestrator | ✅ Implemented (SDD-04) |
 | `DefaultEntityResolutionStrategy` | `EntityResolutionStrategy` | Pure Python Orchestrator | ✅ Implemented (SDD-04) |
+| `DefaultIngestionPipeline` | `IngestionPipeline` | Pure Python Orchestrator | ✅ Implemented (SDD-05) |
 
 **`PostgresGraphRepository`** lives in `src/depth_graph_search/adapters/postgres/`. It uses dual-write: SQL `nodes` table (content, embedding, metadata, full-text search) + AGE graph (topology). The Docker dev stack (`Dockerfile.dev`, `docker-compose.yml`, `docker-init.sql`) provides a ready-to-use PostgreSQL 17 + AGE + pgvector environment.
 
@@ -97,6 +103,8 @@ Adapters are the only layer that talks to the outside world. Each adapter implem
 **`DefaultSearchPipeline`** lives in `src/depth_graph_search/adapters/search/`. Implements `SearchPipeline`. Pure Python orchestrator — no external dependencies. Five-step algorithm: embed query → hybrid search → BFS expand → dedup by node ID → score and sort. Rank-score formula: `1.0 - rank / (top_n + 1)`. BFS-only nodes score `0.0`. Errors from injected ports propagate unmodified.
 
 **`DefaultEntityResolutionStrategy`** lives in `src/depth_graph_search/adapters/search/`. Implements `EntityResolutionStrategy`. Pure Python — wraps a `SearchPipeline` (the ABC, not the concrete class). For each input node, searches with `top_n=1, depth_m=0`. Score `>= threshold` → existing match; otherwise → new entity. `len(result) == len(nodes)` always holds.
+
+**`DefaultIngestionPipeline`** lives in `src/depth_graph_search/adapters/ingestion/`. Implements `IngestionPipeline`. Pure Python orchestrator — no external dependencies. Four-stage algorithm: validate input → LLM extract graph → embed node content → entity resolve + edge rewire → persist new nodes + all edges → return `IngestionResult`. All port errors (`LLMError`, `StorageError`) are wrapped as `IngestionError` with `__cause__` set. `dataclasses.replace()` is used for embedding attachment and edge rewiring (frozen dataclasses). Entity resolution uses an `id_map` dict for O(E) edge rewiring.
 
 **Rule**: A new integration (e.g., a Pinecone vector store) is added by creating a new adapter under `adapters/` that implements the relevant port. Core code is never modified.
 

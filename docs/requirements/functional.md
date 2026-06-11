@@ -41,7 +41,9 @@ depth-graph-search has ten functional requirements spanning ingestion, search, a
 3. Attach `Embedding` and `metadata` to each Node
 4. Persist all Nodes and Edges via `GraphRepository.save_node()` / `GraphRepository.save_edge()`
 
-**Output**: Confirmation that nodes and edges were stored. No partial writes — if any step fails, the entire ingestion is rolled back.
+**Output**: `IngestionResult(node_count, edge_count)` — counts of nodes and edges persisted. No partial writes — if any step fails, `IngestionError` is raised with the underlying port error as `__cause__`.
+
+**Delivery**: `DefaultIngestionPipeline` in `adapters/ingestion/pipeline.py` implements this requirement (SDD-05). Importable as `from depth_graph_search import DefaultIngestionPipeline`.
 
 **Error behavior**: See [Ingestion Flow](../flows/ingestion.md) for the three documented error paths.
 
@@ -141,7 +143,9 @@ depth-graph-search has ten functional requirements spanning ingestion, search, a
 
 **Audience**: Python developers building applications on top of depth-graph-search.
 
-> **v0.1 scope**: Public API surface (class names, method signatures) to be finalized during implementation. This requirement names the capability, not the exact API.
+**Delivery (SDD-05)**: The SDK surface is now active. `DefaultIngestionPipeline` and `DefaultSearchPipeline` are exported from `depth_graph_search.sdk` and from the top-level `depth_graph_search` package. All three ingestion-related names (`IngestionPipeline`, `DefaultIngestionPipeline`, `IngestionResult`) are importable from `depth_graph_search`.
+
+> **v0.1 scope**: `ingest(text, metadata)` and `search(query, **params)` are the primary entry points. API (`api/`) and CLI (`cli/`) surfaces are still stubbed — deferred to SDD-06+.
 
 ---
 
