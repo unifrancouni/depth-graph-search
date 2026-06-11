@@ -114,3 +114,19 @@ class ResolvedNode:
     node: Node
     is_new: bool
     matched_id: str | None = None
+
+
+@dataclass(frozen=True)
+class IngestionResult:
+    """Result summary of an ingestion pipeline run.
+
+    A domain value object returned by ``IngestionPipeline.ingest()``. Reusable
+    across SDK, API, and CLI layers — it carries only counts, never raw data.
+
+    Attributes:
+        node_count: Number of new nodes persisted to the graph store.
+        edge_count: Number of edges persisted to the graph store (all rewired edges).
+    """
+
+    node_count: int
+    edge_count: int
