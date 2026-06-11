@@ -137,15 +137,25 @@ depth-graph-search has ten functional requirements spanning ingestion, search, a
 **Description**: Expose ingestion and search as an importable Python library. No HTTP, no subprocess.
 
 **Behavior**:
-- `from depth_graph_search import GraphSearch` (or equivalent)
-- Caller instantiates with adapter configuration
-- Calls `ingest(text, metadata)` and `search(query, **params)` directly
+- `from depth_graph_search import GraphSearch`
+- Caller uses `GraphSearch.from_openai(dsn, api_key)` or `GraphSearch.from_openrouter(...)` for real-world wiring
+- Caller uses port-injection constructor for testing or custom adapters
+- Calls `gs.ingest(text, metadata)` and `gs.search(query, top_n, depth_m, metadata_filter)` directly
+- Recommended pattern: context manager `with GraphSearch.from_openai(...) as gs:` ensures connection cleanup
 
 **Audience**: Python developers building applications on top of depth-graph-search.
 
-**Delivery (SDD-05)**: The SDK surface is now active. `DefaultIngestionPipeline` and `DefaultSearchPipeline` are exported from `depth_graph_search.sdk` and from the top-level `depth_graph_search` package. All three ingestion-related names (`IngestionPipeline`, `DefaultIngestionPipeline`, `IngestionResult`) are importable from `depth_graph_search`.
+**Delivery (SDD-06)**: `GraphSearch` is the public entry point for the SDK. Implemented in `src/depth_graph_search/sdk/client.py`. Importable as `from depth_graph_search import GraphSearch` or `from depth_graph_search.sdk import GraphSearch`.
 
-> **v0.1 scope**: `ingest(text, metadata)` and `search(query, **params)` are the primary entry points. API (`api/`) and CLI (`cli/`) surfaces are still stubbed — deferred to SDD-06+.
+`GraphSearch` wires all 6 ports into 2 public methods:
+- `ingest(text: str, metadata: Metadata | None = None) -> IngestionResult`
+- `search(query: str, top_n: int = 5, depth_m: int = 2, metadata_filter: Metadata | None = None) -> list[ScoredNode]`
+
+Convenience classmethods handle real-world wiring (connection creation, `repo.initialize()`, provider instantiation):
+- `GraphSearch.from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)`
+- `GraphSearch.from_openrouter(dsn, openai_api_key, openrouter_api_key, *, openrouter_model, embedding_model, graph_name, embedding_dimensions)`
+
+> **v0.1 scope**: `ingest()` and `search()` are the primary entry points. The context manager pattern is the recommended usage. API (`api/`) and CLI (`cli/`) surfaces are still stubbed — deferred to SDD-07+.
 
 ---
 

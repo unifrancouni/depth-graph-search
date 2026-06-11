@@ -59,7 +59,7 @@ The dependency rule is enforced by convention in v0.1 (no import linter yet). An
 
 ## v0.1 Scope
 
-> **v0.1 scope**: Architecture, domain, all 6 ports, all adapters, and the SDK delivery surface are fully implemented. The ingestion pipeline (`DefaultIngestionPipeline`) and search pipeline (`DefaultSearchPipeline`) are both production-ready. `api/` and `cli/` surfaces are stubbed — deferred to SDD-06+.
+> **v0.1 scope**: Architecture, domain, all 6 ports, all adapters, and the SDK delivery surface are fully implemented. The ingestion pipeline (`DefaultIngestionPipeline`) and search pipeline (`DefaultSearchPipeline`) are both production-ready. The `GraphSearch` facade (SDD-06) is the public entry point — `from depth_graph_search import GraphSearch`. `api/` and `cli/` surfaces are stubbed — deferred to SDD-07+.
 
 **Implemented in v0.1:**
 - 4 architecture docs (overview, layers, ports-and-adapters, strategies)
@@ -69,9 +69,9 @@ The dependency rule is enforced by convention in v0.1 (no import linter yet). An
 - Domain layer: `Node`, `Edge`, `Embedding`, `Metadata`, `ScoredNode`, `ResolvedNode`, `IngestionResult` (SDD-01, SDD-05)
 - All 6 port ABCs: `GraphRepository`, `EmbeddingProvider`, `LLMProvider`, `SearchPipeline`, `EntityResolutionStrategy`, `IngestionPipeline` (SDD-01 through SDD-05)
 - All adapters: `PostgresGraphRepository`, `OpenAIProvider`, `OpenRouterProvider`, `DefaultSearchPipeline`, `DefaultEntityResolutionStrategy`, `DefaultIngestionPipeline` (SDD-02 through SDD-05)
-- SDK surface: `from depth_graph_search import IngestionPipeline, DefaultIngestionPipeline, IngestionResult` — all importable (SDD-05)
+- SDK delivery surface: `GraphSearch` facade wiring all 6 ports into `ingest()` / `search()` with `from_openai` / `from_openrouter` classmethods (SDD-06)
 - Reusable test mock adapters: `InMemoryGraphRepository`, `FakeLLMProvider`, `FakeEmbeddingProvider`, `FakeEntityResolutionStrategy` in `tests/mocks/` (SDD-05)
-- 154 unit tests passing
+- 182 unit tests passing
 
 **Explicitly excluded from v0.1:**
 - `api/` and `cli/` delivery surfaces (SDD-06+)

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (SDD-06 — SDK Facade)
+
+- **SDD-06 — SDK Facade**: `GraphSearch` is the high-level public entry point for the SDK — wires all 6 ports into a 2-method public API (`ingest`, `search`); `from_openai` and `from_openrouter` classmethods handle real-world wiring; context manager pattern recommended for connection cleanup; 28 new unit tests — all 182 unit tests passing
+- `sdk/client.py` — `GraphSearch` class (~230 LOC): pure wiring layer, zero business logic; `__init__` accepts `graph_repository`, `embedding_provider`, `llm_provider`, `entity_resolution=None`; auto-builds `DefaultSearchPipeline` → `DefaultEntityResolutionStrategy` (when `entity_resolution=None`) → `DefaultIngestionPipeline`; `_connection = None` in port-injection mode (caller owns lifecycle)
+- `sdk/client.py` — `GraphSearch.from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)`: `psycopg.connect(dsn)` → `PostgresGraphRepository` → `initialize()` → single `OpenAIProvider` for embed+llm; stores `_connection` for `close()`
+- `sdk/client.py` — `GraphSearch.from_openrouter(dsn, openai_api_key, openrouter_api_key, *, ...)`: `OpenAIProvider` for embeddings, `OpenRouterProvider` for LLM; same connection lifecycle
+- `sdk/client.py` — `ingest(text, metadata=None) -> IngestionResult`: delegates to `_ingestion_pipeline.ingest()`; errors propagate unchanged
+- `sdk/client.py` — `search(query, top_n=5, depth_m=2, metadata_filter=None) -> list[ScoredNode]`: delegates to `_search_pipeline.search(..., pipeline=None)`; `pipeline` param intentionally not exposed
+- `sdk/client.py` — `close()`: closes `_connection` only when set (idempotent, no-op in port-injection mode); `__enter__`/`__exit__` context manager
+- `sdk/__init__.py` — `GraphSearch` added to imports and `__all__`
+- `src/depth_graph_search/__init__.py` — `GraphSearch` added to top-level imports and `__all__`
+- `tests/unit/sdk/__init__.py` — empty package init for new test package
+- `tests/unit/sdk/test_client.py` — 28 unit tests: constructor wiring, auto-entity-resolution, ingest/search delegation, error propagation (StorageError/IngestionError/LLMError), close() variants, context manager, from_openai construction order + single provider + embedding_dimensions/graph_name threading, from_openrouter split providers, top-level import
+- **182 total tests passing** (28 new SDK facade tests + 154 pre-existing; 0 failed, 0 skipped)
+
+---
+
 ### Added (SDD-05 — Ingestion Pipeline + Mocks + Tests)
 
 - **SDD-05 — Ingestion Pipeline + Mocks + Tests**: `DefaultIngestionPipeline` completes the ingestion port, `IngestionResult` domain value object added, 4 ABC-compliant mock adapters created, 18 new unit tests — all 152 unit tests passing

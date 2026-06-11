@@ -121,7 +121,7 @@ results = search(
 
 The custom pipeline must implement the `SearchPipeline` port. See [Strategies](../architecture/strategies.md#custom-pipeline-extension) for the extension guide.
 
-> **v0.1 scope**: The pipeline registry (named strategy lookup) is not yet implemented (deferred to SDD-06). Only the default pipeline is available in v0.1. The `pipeline` parameter is accepted by `DefaultSearchPipeline` but silently ignored.
+> **v0.1 scope**: The pipeline registry (named strategy lookup) is not yet implemented (deferred to SDD-07+). Only the default pipeline is available in v0.1. The `pipeline` parameter is accepted by `DefaultSearchPipeline` but silently ignored. The `GraphSearch` facade (SDD-06) intentionally does not expose the `pipeline` param in its `search()` method — it will be added when the registry exists.
 
 ## See Also
 

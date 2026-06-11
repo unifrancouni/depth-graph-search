@@ -78,6 +78,7 @@ Orchestrates the full ingestion flow. This is a strategy port — the pipeline i
 | `DefaultSearchPipeline` | `SearchPipeline` | Pure Python Orchestrator | `adapters/search/` | ✅ Implemented (SDD-04) |
 | `DefaultEntityResolutionStrategy` | `EntityResolutionStrategy` | Pure Python Orchestrator | `adapters/search/` | ✅ Implemented (SDD-04) |
 | `DefaultIngestionPipeline` | `IngestionPipeline` | Pure Python Orchestrator | `adapters/ingestion/` | ✅ Implemented (SDD-05) |
+| `GraphSearch` | SDK Facade | Pure Python Wiring Layer | `sdk/client.py` | ✅ Implemented (SDD-06) |
 
 **Key note on `OpenAIProvider`**: It implements both `EmbeddingProvider` and `LLMProvider`. A single adapter class can implement multiple ports when the underlying service provides both capabilities.
 
@@ -119,6 +120,19 @@ Orchestrates the full ingestion flow. This is a strategy port — the pipeline i
 - Metadata guarantee: caller-supplied `metadata` is merged onto every node before persistence using `{**metadata, **node.metadata}` — node-level keys take precedence over caller-supplied keys on conflict.
 - All port errors use `raise IngestionError(...) from exc` — `__cause__` chain is always set.
 - `dataclasses.replace()` is used throughout — frozen dataclasses are never mutated in-place.
+
+**`GraphSearch` facade implementation notes** (SDD-06):
+- Lives in `sdk/client.py`. Pure wiring layer — zero business logic.
+- Constructor accepts 4 port ABCs: `graph_repository`, `embedding_provider`, `llm_provider`, `entity_resolution=None`.
+- When `entity_resolution=None`: auto-builds `DefaultSearchPipeline(graph_repository, embedding_provider)` → `DefaultEntityResolutionStrategy(search_pipeline)` internally.
+- Always builds `DefaultIngestionPipeline` and `DefaultSearchPipeline` from the injected ports.
+- `_connection` attribute: `None` in port-injection mode (caller owns lifecycle); set to `psycopg.Connection` by classmethods.
+- `close()`: only closes `_connection` when `_connection is not None` — no-op otherwise. Sets `_connection = None` after closing (idempotent).
+- `ingest(text, metadata=None)` → delegates to `_ingestion_pipeline.ingest(text, metadata)` — propagates all errors unchanged.
+- `search(query, top_n=5, depth_m=2, metadata_filter=None)` → delegates to `_search_pipeline.search(..., pipeline=None)` — `pipeline` param is intentionally not exposed.
+- `from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)`: `psycopg.connect(dsn)` → `PostgresGraphRepository(conn, graph_name, embedding_dimensions)` → `repo.initialize()` → single `OpenAIProvider` for both embed+llm → `instance._connection = conn`.
+- `from_openrouter(dsn, openai_api_key, openrouter_api_key, *, ...)`: same connection sequence; `OpenAIProvider` for embeddings only; `OpenRouterProvider` for LLM.
+- Context manager: `__enter__` returns `self`; `__exit__` calls `close()`.
 
 Every port has at least one adapter. Every adapter implements at least one port. No orphan interfaces, no orphan implementations.
 

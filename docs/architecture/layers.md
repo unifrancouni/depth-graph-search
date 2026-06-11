@@ -63,7 +63,7 @@ graph TD
 | **Delivery — API** | `api/` | `core/ports/`, `core/domain/` |
 | **Delivery — CLI** | `cli/` | `core/ports/`, `core/domain/` |
 
-> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02). `adapters/openai/` and `adapters/openrouter/` are fully implemented (SDD-03). `adapters/search/` is fully implemented (SDD-04) — `DefaultSearchPipeline` and `DefaultEntityResolutionStrategy` close the search port. `adapters/ingestion/` is fully implemented (SDD-05) — `DefaultIngestionPipeline` completes the ingestion pipeline port and implements the full 4-stage ingestion flow. **SDK delivery surface** (`sdk/`) is now active — exports `DefaultIngestionPipeline` and `DefaultSearchPipeline`. `api/` and `cli/` are stubbed — deferred to SDD-06+.
+> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02). `adapters/openai/` and `adapters/openrouter/` are fully implemented (SDD-03). `adapters/search/` is fully implemented (SDD-04) — `DefaultSearchPipeline` and `DefaultEntityResolutionStrategy` close the search port. `adapters/ingestion/` is fully implemented (SDD-05) — `DefaultIngestionPipeline` completes the ingestion pipeline port and implements the full 4-stage ingestion flow. **SDK delivery surface** (`sdk/`) is fully implemented (SDD-06) — `GraphSearch` facade wires all 6 ports into a 2-method public API (`ingest`, `search`) with `from_openai`/`from_openrouter` convenience classmethods. `api/` and `cli/` are stubbed — deferred to SDD-07+.
 
 ## Domain Entities
 
@@ -114,13 +114,73 @@ The three delivery surfaces are thin entry points. They wire dependencies (injec
 
 | Surface | Package | Consumer | How it Works |
 |---------|---------|----------|--------------|
-| **SDK** | `sdk/` | Python developers | Importable library. Caller instantiates and calls directly. |
+| **SDK** | `sdk/` | Python developers | Importable library. Use `GraphSearch` as the high-level entry point. |
 | **HTTP API** | `api/` | Any HTTP client | REST service wrapping the SDK surface. |
 | **CLI** | `cli/` | Terminal users | Command-line interface. Reads args, calls core, prints output. |
 
 All three surfaces share the same core — there is no separate business logic per surface.
 
 > **v0.1 scope**: All three surfaces are specified here. v0.1 implementation priority: SDK first, then API, then CLI.
+
+## SDK Delivery Surface — `GraphSearch`
+
+`GraphSearch` is the public entry point for the SDK. It is a **pure wiring layer** — no business logic, all delegation to internal pipelines.
+
+### Import
+
+```python
+from depth_graph_search import GraphSearch
+# or
+from depth_graph_search.sdk import GraphSearch
+```
+
+### Constructor (Port-Injection Mode)
+
+For testing or custom adapter wiring:
+
+```python
+gs = GraphSearch(
+    graph_repository=repo,        # GraphRepository
+    embedding_provider=embedder,  # EmbeddingProvider
+    llm_provider=llm,             # LLMProvider
+    entity_resolution=resolver,   # EntityResolutionStrategy | None (auto-built if None)
+)
+```
+
+When `entity_resolution=None`, a `DefaultEntityResolutionStrategy` is auto-created internally, wired to a `DefaultSearchPipeline` built from the injected ports. The caller owns the connection lifecycle — `close()` is a no-op.
+
+### Classmethods (Real-World Wiring)
+
+Classmethods handle connection creation, `repo.initialize()`, and provider wiring automatically. The facade owns the connection lifecycle.
+
+**`GraphSearch.from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)`**
+
+- Creates `psycopg.connect(dsn)` → `PostgresGraphRepository` → `initialize()`
+- Wires a single `OpenAIProvider` as both `embedding_provider` and `llm_provider`
+- Returns a `GraphSearch` instance that owns the connection
+
+**`GraphSearch.from_openrouter(dsn, openai_api_key, openrouter_api_key, *, openrouter_model, embedding_model, graph_name, embedding_dimensions)`**
+
+- Creates `psycopg.connect(dsn)` → `PostgresGraphRepository` → `initialize()`
+- `OpenAIProvider` for embeddings, `OpenRouterProvider` for LLM extraction
+
+### Recommended Usage Pattern
+
+```python
+with GraphSearch.from_openai("postgresql://...", "sk-...") as gs:
+    result = gs.ingest("Alice works at Acme Corp.", metadata={"source": "wiki"})
+    nodes = gs.search("who works at Acme?", top_n=5, depth_m=2)
+```
+
+### Internal Wiring
+
+`GraphSearch` builds three internal objects on construction:
+
+1. `_search_pipeline = DefaultSearchPipeline(graph_repository, embedding_provider)`
+2. `_entity_resolution = DefaultEntityResolutionStrategy(_search_pipeline)` ← auto-built when `entity_resolution=None`
+3. `_ingestion_pipeline = DefaultIngestionPipeline(llm_provider, embedding_provider, graph_repository, entity_resolution)`
+
+All method calls on `GraphSearch.ingest()` and `GraphSearch.search()` are **pure delegation** — the facade adds zero logic.
 
 ## See Also
 
