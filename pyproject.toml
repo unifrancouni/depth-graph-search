@@ -22,6 +22,7 @@ packages = ["src/depth_graph_search"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
     "mypy>=1.10",
     "ruff>=0.4",
@@ -31,6 +32,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["-v", "--strict-markers", "--tb=short"]
+asyncio_mode = "auto"
 
 [tool.mypy]
 python_version = "3.11"
