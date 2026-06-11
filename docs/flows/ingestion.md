@@ -6,6 +6,8 @@
 
 Ingestion transforms free-form text and optional metadata into a graph structure stored in PostgreSQL. The process has four stages: LLM-based entity extraction, embedding generation, entity resolution (deduplication against existing graph), and graph persistence. All stages must succeed — there are no partial writes.
 
+This flow applies to both the **sync** (`DefaultIngestionPipeline` / `GraphSearch`) and **async** (`AsyncDefaultIngestionPipeline` / `AsyncGraphSearch`) variants. The async variant mirrors this flow with `await` on every I/O call; the sequence and invariants are identical.
+
 ## Sequence Diagram
 
 ```mermaid
@@ -141,9 +143,23 @@ Metadata in depth-graph-search is intentionally schema-free:
 
 **Invariant**: Invalid input is rejected at the SDK boundary. No downstream ports are called with invalid data.
 
+## Async Ingestion
+
+`AsyncDefaultIngestionPipeline` and `AsyncGraphSearch` implement the same flow with `await` on every I/O call:
+
+```python
+async with await AsyncGraphSearch.from_openai("postgresql://...", "sk-...") as gs:
+    await gs.ingest("Alice works at Acme Corp.", metadata={"source": "wiki"})
+```
+
+Key async differences:
+- `AsyncDefaultIngestionPipeline.ingest()` returns `None` (not `IngestionResult`) — simplified for v0.1
+- Entity resolution uses sequential `await pipeline.search(entity)` — no `asyncio.gather`
+- All error paths and invariants (zero writes on failure, metadata merge guarantee) are identical to the sync variant
+
 ## See Also
 
 - [FR-01: Text Ingestion](../requirements/functional.md#fr-01--text-ingestion) — behavioral requirement for this flow
 - [FR-02: Metadata Pre-filter](../requirements/functional.md#fr-02--metadata-pre-filter) — how ingested metadata is used in search
-- [Ports & Adapters](../architecture/ports-and-adapters.md) — `LLMProvider`, `EmbeddingProvider`, `GraphRepository` contracts
+- [Ports & Adapters](../architecture/ports-and-adapters.md) — `LLMProvider`, `EmbeddingProvider`, `GraphRepository` contracts and async counterparts
 - [Search Flow](./search.md) — the downstream flow that consumes ingested data

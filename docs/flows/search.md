@@ -6,7 +6,7 @@
 
 Search in depth-graph-search runs in three sequential phases after an optional pre-filter. A metadata pre-filter narrows the graph, hybrid RAG (BM25 + dense embeddings) finds the most relevant entry nodes, and BFS traversal expands the graph outward from those nodes. The result is a deduplicated, scored package of nodes.
 
-The pipeline itself is a strategy — callers can substitute a different pipeline at call time.
+The pipeline itself is a strategy — callers can substitute a different pipeline at call time. Both **sync** (`DefaultSearchPipeline` / `GraphSearch`) and **async** (`AsyncDefaultSearchPipeline` / `AsyncGraphSearch`) variants are available.
 
 ## Sequence Diagram
 
@@ -122,6 +122,21 @@ results = search(
 The custom pipeline must implement the `SearchPipeline` port. See [Strategies](../architecture/strategies.md#custom-pipeline-extension) for the extension guide.
 
 > **v0.1 scope**: The pipeline registry (named strategy lookup) is not yet implemented (deferred to SDD-07+). Only the default pipeline is available in v0.1. The `pipeline` parameter is accepted by `DefaultSearchPipeline` but silently ignored. The `GraphSearch` facade (SDD-06) intentionally does not expose the `pipeline` param in its `search()` method — it will be added when the registry exists.
+
+## Async Search
+
+`AsyncDefaultSearchPipeline` and `AsyncGraphSearch` implement the same flow with `await` on every I/O call:
+
+```python
+async with await AsyncGraphSearch.from_openai("postgresql://...", "sk-...") as gs:
+    nodes = await gs.search("who works at Acme?", top_n=5, depth_m=2)
+```
+
+Key async differences:
+- `AsyncDefaultSearchPipeline.search()` returns `list[Node]` (not `list[ScoredNode]`) — simplified for v0.1 async variant
+- `embed → search_hybrid → traverse_bfs → dedup → [:top_n]` with `await` on embed, search_hybrid, and traverse_bfs
+- Scoring and ranking remain synchronous (pure CPU, no await needed)
+- All edge cases (empty results, dedup) behave identically to the sync variant
 
 ## See Also
 

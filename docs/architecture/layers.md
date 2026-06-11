@@ -11,7 +11,8 @@ depth-graph-search follows Clean Architecture with four layers. Each layer has a
 ```mermaid
 graph TD
     subgraph Delivery["Delivery — sdk/ · api/ · cli/"]
-        SDK[sdk/]
+        SDK[sdk/client.py\nGraphSearch sync]
+        ASDK[sdk/async_client.py\nAsyncGraphSearch async]
         API[api/]
         CLI[cli/]
     end
@@ -31,6 +32,12 @@ graph TD
         SPS[SearchPipeline]
         ERS[EntityResolutionStrategy]
         IGP[IngestionPipeline]
+        AGRP[AsyncGraphRepository]
+        AEMP[AsyncEmbeddingProvider]
+        ALLP[AsyncLLMProvider]
+        ASPS[AsyncSearchPipeline]
+        AERS[AsyncEntityResolutionStrategy]
+        AIGP[AsyncIngestionPipeline]
     end
 
     subgraph Domain["Domain — core/domain/"]
@@ -44,6 +51,7 @@ graph TD
     end
 
     SDK --> AppPorts
+    ASDK --> AppPorts
     API --> AppPorts
     CLI --> AppPorts
     PGR --> AppPorts
@@ -63,7 +71,7 @@ graph TD
 | **Delivery — API** | `api/` | `core/ports/`, `core/domain/` |
 | **Delivery — CLI** | `cli/` | `core/ports/`, `core/domain/` |
 
-> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02). `adapters/openai/` and `adapters/openrouter/` are fully implemented (SDD-03). `adapters/search/` is fully implemented (SDD-04) — `DefaultSearchPipeline` and `DefaultEntityResolutionStrategy` close the search port. `adapters/ingestion/` is fully implemented (SDD-05) — `DefaultIngestionPipeline` completes the ingestion pipeline port and implements the full 4-stage ingestion flow. **SDK delivery surface** (`sdk/`) is fully implemented (SDD-06) — `GraphSearch` facade wires all 6 ports into a 2-method public API (`ingest`, `search`) with `from_openai`/`from_openrouter` convenience classmethods. `api/` and `cli/` are stubbed — deferred to SDD-07+.
+> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02, SDD-07 async). `adapters/openai/` and `adapters/openrouter/` are fully implemented with both sync and async variants (SDD-03, SDD-07). `adapters/search/` is fully implemented (SDD-04, SDD-07 async). `adapters/ingestion/` is fully implemented (SDD-05, SDD-07 async). **SDK delivery surface** (`sdk/`) ships both `GraphSearch` (sync, SDD-06) and `AsyncGraphSearch` (async, SDD-07). `api/` and `cli/` are stubbed — deferred to future SDDs.
 
 ## Domain Entities
 
@@ -85,6 +93,8 @@ Domain entities are immutable — `frozen=True` enforces this at runtime. Adapte
 
 Adapters are the only layer that talks to the outside world. Each adapter implements one or more ports.
 
+**Sync Adapters:**
+
 | Adapter | Port(s) Implemented | Technology | Status |
 |---------|-------------------|------------|--------|
 | `PostgresGraphRepository` | `GraphRepository` | PostgreSQL 17 + Apache AGE 1.6 + pgvector | ✅ Implemented (SDD-02) |
@@ -93,6 +103,17 @@ Adapters are the only layer that talks to the outside world. Each adapter implem
 | `DefaultSearchPipeline` | `SearchPipeline` | Pure Python Orchestrator | ✅ Implemented (SDD-04) |
 | `DefaultEntityResolutionStrategy` | `EntityResolutionStrategy` | Pure Python Orchestrator | ✅ Implemented (SDD-04) |
 | `DefaultIngestionPipeline` | `IngestionPipeline` | Pure Python Orchestrator | ✅ Implemented (SDD-05) |
+
+**Async Adapters (SDD-07):**
+
+| Adapter | Port(s) Implemented | Technology | Status |
+|---------|-------------------|------------|--------|
+| `AsyncPostgresGraphRepository` | `AsyncGraphRepository` | psycopg.AsyncConnection + pgvector async | ✅ Implemented (SDD-07) |
+| `AsyncOpenAIProvider` | `AsyncEmbeddingProvider`, `AsyncLLMProvider` | openai.AsyncOpenAI | ✅ Implemented (SDD-07) |
+| `AsyncOpenRouterProvider` | `AsyncLLMProvider` | openai.AsyncOpenAI + OpenRouter base_url | ✅ Implemented (SDD-07) |
+| `AsyncDefaultSearchPipeline` | `AsyncSearchPipeline` | Pure Python Async Orchestrator | ✅ Implemented (SDD-07) |
+| `AsyncDefaultEntityResolutionStrategy` | `AsyncEntityResolutionStrategy` | Pure Python Async Orchestrator | ✅ Implemented (SDD-07) |
+| `AsyncDefaultIngestionPipeline` | `AsyncIngestionPipeline` | Pure Python Async Orchestrator | ✅ Implemented (SDD-07) |
 
 **`PostgresGraphRepository`** lives in `src/depth_graph_search/adapters/postgres/`. It uses dual-write: SQL `nodes` table (content, embedding, metadata, full-text search) + AGE graph (topology). The Docker dev stack (`Dockerfile.dev`, `docker-compose.yml`, `docker-init.sql`) provides a ready-to-use PostgreSQL 17 + AGE + pgvector environment.
 
@@ -122,65 +143,50 @@ All three surfaces share the same core — there is no separate business logic p
 
 > **v0.1 scope**: All three surfaces are specified here. v0.1 implementation priority: SDK first, then API, then CLI.
 
-## SDK Delivery Surface — `GraphSearch`
+## SDK Delivery Surfaces
 
-`GraphSearch` is the public entry point for the SDK. It is a **pure wiring layer** — no business logic, all delegation to internal pipelines.
+### `GraphSearch` — Sync Facade (SDD-06)
 
-### Import
+`GraphSearch` is the sync public entry point for the SDK. It is a **pure wiring layer** — no business logic, all delegation to internal pipelines.
 
 ```python
 from depth_graph_search import GraphSearch
-# or
-from depth_graph_search.sdk import GraphSearch
-```
 
-### Constructor (Port-Injection Mode)
-
-For testing or custom adapter wiring:
-
-```python
-gs = GraphSearch(
-    graph_repository=repo,        # GraphRepository
-    embedding_provider=embedder,  # EmbeddingProvider
-    llm_provider=llm,             # LLMProvider
-    entity_resolution=resolver,   # EntityResolutionStrategy | None (auto-built if None)
-)
-```
-
-When `entity_resolution=None`, a `DefaultEntityResolutionStrategy` is auto-created internally, wired to a `DefaultSearchPipeline` built from the injected ports. The caller owns the connection lifecycle — `close()` is a no-op.
-
-### Classmethods (Real-World Wiring)
-
-Classmethods handle connection creation, `repo.initialize()`, and provider wiring automatically. The facade owns the connection lifecycle.
-
-**`GraphSearch.from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)`**
-
-- Creates `psycopg.connect(dsn)` → `PostgresGraphRepository` → `initialize()`
-- Wires a single `OpenAIProvider` as both `embedding_provider` and `llm_provider`
-- Returns a `GraphSearch` instance that owns the connection
-
-**`GraphSearch.from_openrouter(dsn, openai_api_key, openrouter_api_key, *, openrouter_model, embedding_model, graph_name, embedding_dimensions)`**
-
-- Creates `psycopg.connect(dsn)` → `PostgresGraphRepository` → `initialize()`
-- `OpenAIProvider` for embeddings, `OpenRouterProvider` for LLM extraction
-
-### Recommended Usage Pattern
-
-```python
 with GraphSearch.from_openai("postgresql://...", "sk-...") as gs:
     result = gs.ingest("Alice works at Acme Corp.", metadata={"source": "wiki"})
     nodes = gs.search("who works at Acme?", top_n=5, depth_m=2)
 ```
 
-### Internal Wiring
+**Classmethods**: `from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)` and `from_openrouter(dsn, openai_api_key, openrouter_api_key, *, ...)` handle connection creation, `repo.initialize()`, and provider wiring. The facade owns the connection lifecycle.
 
-`GraphSearch` builds three internal objects on construction:
-
+**Internal wiring**:
 1. `_search_pipeline = DefaultSearchPipeline(graph_repository, embedding_provider)`
 2. `_entity_resolution = DefaultEntityResolutionStrategy(_search_pipeline)` ← auto-built when `entity_resolution=None`
 3. `_ingestion_pipeline = DefaultIngestionPipeline(llm_provider, embedding_provider, graph_repository, entity_resolution)`
 
-All method calls on `GraphSearch.ingest()` and `GraphSearch.search()` are **pure delegation** — the facade adds zero logic.
+### `AsyncGraphSearch` — Async Facade (SDD-07)
+
+`AsyncGraphSearch` is the async-native public entry point. It mirrors `GraphSearch` exactly, but every I/O method is `async def`. Constructors are sync (no I/O). Factory classmethods are `async classmethod` (they call `await repo.initialize()`).
+
+```python
+from depth_graph_search import AsyncGraphSearch
+
+async with await AsyncGraphSearch.from_openai("postgresql://...", "sk-...") as gs:
+    await gs.ingest("Alice works at Acme Corp.", metadata={"source": "wiki"})
+    nodes = await gs.search("who works at Acme?", top_n=5, depth_m=2)
+```
+
+**Key design facts**:
+- `__init__` is synchronous — accepts pre-built async ports via dependency injection; no I/O
+- `from_openai` / `from_openrouter` are `async classmethod` — must be awaited; call `await repo.initialize()` internally
+- `__aenter__` returns `self`; `__aexit__` awaits `close()`
+- All async adapters are sibling files next to their sync counterparts (`async_*.py`)
+- No inheritance between sync and async ABCs — parallel, independent interfaces
+
+**Internal wiring**:
+1. `_search_pipeline = AsyncDefaultSearchPipeline(async_repository, async_embedding_provider)`
+2. `_entity_resolution = AsyncDefaultEntityResolutionStrategy(_search_pipeline)`
+3. `_ingestion_pipeline = AsyncDefaultIngestionPipeline(async_llm_provider, async_embedding_provider, async_repository, _entity_resolution)`
 
 ## See Also
 

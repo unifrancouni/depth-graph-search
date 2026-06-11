@@ -68,7 +68,7 @@ Orchestrates the full ingestion flow. This is a strategy port — the pipeline i
 
 > **v0.1 scope**: `DefaultIngestionPipeline` implements the 4-stage flow: validate → LLM extract → embed → entity resolve + edge rewire → persist → return `IngestionResult`. Empty extraction fast-paths to `IngestionResult(0, 0)` without calling `embed_batch`. Caller-supplied `metadata` is merged onto every persisted node (`{**metadata, **node.metadata}`) — node-level keys take precedence.
 
-## Adapter Mapping
+## Sync Adapter Mapping
 
 | Adapter | Implements | Technology | Package | Status |
 |---------|------------|------------|---------|--------|
@@ -135,6 +135,86 @@ Orchestrates the full ingestion flow. This is a strategy port — the pipeline i
 - Context manager: `__enter__` returns `self`; `__exit__` calls `close()`.
 
 Every port has at least one adapter. Every adapter implements at least one port. No orphan interfaces, no orphan implementations.
+
+## Async Port Interfaces (SDD-07)
+
+Six async port ABCs mirror the sync ports exactly. All methods are `async def @abstractmethod`. Async ABCs do NOT inherit from sync ABCs — they are parallel, independent interfaces. This avoids the mypy issue where `async def` overrides a sync `abstractmethod`.
+
+All async ABCs live in `src/depth_graph_search/core/ports/async_ports.py`.
+
+### `AsyncGraphRepository`
+
+| Method | Parameters | Return Type | Description |
+|--------|------------|-------------|-------------|
+| `initialize` | — | `None` | Set up schema, register vector extension. Idempotent. |
+| `save_node` | `node: Node` | `None` | Persist a Node with embedding and metadata. |
+| `save_edge` | `edge: Edge` | `None` | Persist a directed relationship. |
+| `get_node` | `node_id: str` | `Node \| None` | Retrieve a Node by ID. Returns `None` if not found. |
+| `search_hybrid` | `query_embedding: list[float]`, `query_text: str`, `limit: int` | `list[Node]` | BM25 + dense vector hybrid search. |
+| `traverse_bfs` | `start_node_id: str`, `max_depth: int` | `list[Node]` | BFS graph expansion. |
+| `close` | — | `None` | Close the async connection. Idempotent. |
+
+### `AsyncEmbeddingProvider`
+
+| Method | Parameters | Return Type | Description |
+|--------|------------|-------------|-------------|
+| `embed` | `text: str` | `list[float]` | Generate a dense vector for the given text. |
+| `embed_batch` | `texts: list[str]` | `list[list[float]]` | Batch embedding. |
+
+### `AsyncLLMProvider`
+
+| Method | Parameters | Return Type | Description |
+|--------|------------|-------------|-------------|
+| `extract_graph` | `text: str`, `metadata: dict` | `GraphData` | Extract structured entities and relationships. |
+| `complete` | `prompt: str` | `str` | General-purpose text completion. |
+
+### `AsyncEntityResolutionStrategy`
+
+| Method | Parameters | Return Type | Description |
+|--------|------------|-------------|-------------|
+| `resolve` | `entities: list[str]` | `list[Node]` | Sequential resolution — no `asyncio.gather`. |
+
+### `AsyncIngestionPipeline`
+
+| Method | Parameters | Return Type | Description |
+|--------|------------|-------------|-------------|
+| `ingest` | `text: str`, `metadata: dict` | `None` | Execute the full async ingestion flow. |
+
+### `AsyncSearchPipeline`
+
+| Method | Parameters | Return Type | Description |
+|--------|------------|-------------|-------------|
+| `search` | `query: str` | `list[Node]` | Execute the full async search flow. |
+
+## Async Adapter Mapping (SDD-07)
+
+| Adapter | Implements | Technology | Package | Status |
+|---------|------------|------------|---------|--------|
+| `AsyncPostgresGraphRepository` | `AsyncGraphRepository` | psycopg.AsyncConnection + pgvector async | `adapters/postgres/` | ✅ Implemented (SDD-07) |
+| `AsyncOpenAIProvider` | `AsyncEmbeddingProvider`, `AsyncLLMProvider` | openai.AsyncOpenAI | `adapters/openai/` | ✅ Implemented (SDD-07) |
+| `AsyncOpenRouterProvider` | `AsyncLLMProvider` | openai.AsyncOpenAI + OpenRouter base_url | `adapters/openrouter/` | ✅ Implemented (SDD-07) |
+| `AsyncDefaultSearchPipeline` | `AsyncSearchPipeline` | Pure Python Async Orchestrator | `adapters/search/` | ✅ Implemented (SDD-07) |
+| `AsyncDefaultEntityResolutionStrategy` | `AsyncEntityResolutionStrategy` | Pure Python Async Orchestrator | `adapters/search/` | ✅ Implemented (SDD-07) |
+| `AsyncDefaultIngestionPipeline` | `AsyncIngestionPipeline` | Pure Python Async Orchestrator | `adapters/ingestion/` | ✅ Implemented (SDD-07) |
+| `AsyncGraphSearch` | Async SDK Facade | Pure Python Async Wiring Layer | `sdk/async_client.py` | ✅ Implemented (SDD-07) |
+
+**Critical psycopg3 async gotcha**: In psycopg3, `AsyncCursor.fetchone()` and `AsyncCursor.fetchall()` are **synchronous** methods — only `execute()` is async. The async repository calls `cursor = await conn.execute(sql)` then `cursor.fetchone()` without `await`.
+
+**`AsyncPostgresGraphRepository` implementation notes** (SDD-07):
+- Accepts an open `psycopg.AsyncConnection` — caller owns connection lifecycle.
+- `initialize()` calls `await register_vector_async(conn)` (imported from `pgvector.psycopg`), loads AGE, sets `search_path`, executes schema DDL. `DuplicateSchema` suppressed via `contextlib.suppress`.
+- `_row_to_node()` and `_parse_agtype_scalar()` are duplicated as instance methods (not imported from sync adapter — adapters do not import from each other).
+- All `psycopg.Error` → `StorageError` with `__cause__` chaining.
+- `close()` is idempotent — no error if already closed.
+
+**`AsyncOpenAIProvider` implementation notes** (SDD-07):
+- Imports `_map_extraction`, `EXTRACTION_SYSTEM_PROMPT` from sync `provider.py` within the same `adapters/openai/` package (same-package import is acceptable).
+- All `openai.OpenAIError` → `LLMError` with `__cause__` chaining.
+
+**`AsyncDefaultEntityResolutionStrategy` implementation notes** (SDD-07):
+- Accepts `AsyncSearchPipeline` (not `DefaultSearchPipeline` — decoupled from concrete class).
+- Sequential `await pipeline.search(entity)` per entity — deliberately avoids `asyncio.gather` for v0.1.
+- `resolve([])` returns `[]` immediately without calling `search`.
 
 ## Why This Architecture
 

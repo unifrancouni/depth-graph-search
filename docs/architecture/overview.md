@@ -6,14 +6,15 @@
 
 depth-graph-search is a RAG library that combines hybrid vector search with graph traversal. It is built on Clean Architecture: a dependency-free core surrounded by swappable adapters. All persistence runs through a single PostgreSQL connection (relational + pgvector + AGE).
 
-The system exposes three delivery surfaces — SDK, HTTP API, and CLI — all sharing the same core.
+The system exposes three delivery surfaces — SDK, HTTP API, and CLI — all sharing the same core. Both **synchronous** (`GraphSearch`) and **async-native** (`AsyncGraphSearch`) facades are available, making the SDK fully usable from FastAPI, asyncio-native applications, and any async Python runtime.
 
 ## System Boundaries
 
 ```mermaid
 graph TD
     subgraph Delivery["Delivery Layer"]
-        SDK["SDK\n(Python import)"]
+        SDK["SDK\n(GraphSearch — sync)"]
+        ASDK["Async SDK\n(AsyncGraphSearch — async)"]
         API["HTTP API\n(REST)"]
         CLI["CLI\n(command-line)"]
     end
@@ -22,6 +23,9 @@ graph TD
         PG["PostgresGraphRepository\n(AGE + pgvector)"]
         OAI["OpenAIProvider\n(embeddings + LLM)"]
         ORI["OpenRouterProvider\n(LLM)"]
+        APG["AsyncPostgresGraphRepository\n(async AGE + pgvector)"]
+        AOAI["AsyncOpenAIProvider\n(async embeddings + LLM)"]
+        AORI["AsyncOpenRouterProvider\n(async LLM)"]
     end
 
     subgraph Core["Core Layer"]
@@ -32,12 +36,17 @@ graph TD
     External[("PostgreSQL\n+ AGE\n+ pgvector")]
 
     SDK --> Ports
+    ASDK --> Ports
     API --> Ports
     CLI --> Ports
     PG --> Ports
     OAI --> Ports
     ORI --> Ports
+    APG --> Ports
+    AOAI --> Ports
+    AORI --> Ports
     PG --> External
+    APG --> External
 
     style Core fill:#1a1a2e,color:#eee,stroke:#444
     style Adapters fill:#16213e,color:#eee,stroke:#444
@@ -59,7 +68,7 @@ The dependency rule is enforced by convention in v0.1 (no import linter yet). An
 
 ## v0.1 Scope
 
-> **v0.1 scope**: Architecture, domain, all 6 ports, all adapters, and the SDK delivery surface are fully implemented. The ingestion pipeline (`DefaultIngestionPipeline`) and search pipeline (`DefaultSearchPipeline`) are both production-ready. The `GraphSearch` facade (SDD-06) is the public entry point — `from depth_graph_search import GraphSearch`. `api/` and `cli/` surfaces are stubbed — deferred to SDD-07+.
+> **v0.1 scope**: Architecture, domain, all 6 sync ports + 6 async ports, all sync and async adapters, and both SDK delivery surfaces (`GraphSearch` + `AsyncGraphSearch`) are fully implemented. The ingestion and search pipelines are production-ready in both sync and async variants. `api/` and `cli/` surfaces are stubbed — deferred to future SDDs.
 
 **Implemented in v0.1:**
 - 4 architecture docs (overview, layers, ports-and-adapters, strategies)
@@ -67,18 +76,23 @@ The dependency rule is enforced by convention in v0.1 (no import linter yet). An
 - 2 requirements docs (functional FR-01–FR-10, non-functional)
 - 2 flow docs (ingestion, search)
 - Domain layer: `Node`, `Edge`, `Embedding`, `Metadata`, `ScoredNode`, `ResolvedNode`, `IngestionResult` (SDD-01, SDD-05)
-- All 6 port ABCs: `GraphRepository`, `EmbeddingProvider`, `LLMProvider`, `SearchPipeline`, `EntityResolutionStrategy`, `IngestionPipeline` (SDD-01 through SDD-05)
-- All adapters: `PostgresGraphRepository`, `OpenAIProvider`, `OpenRouterProvider`, `DefaultSearchPipeline`, `DefaultEntityResolutionStrategy`, `DefaultIngestionPipeline` (SDD-02 through SDD-05)
-- SDK delivery surface: `GraphSearch` facade wiring all 6 ports into `ingest()` / `search()` with `from_openai` / `from_openrouter` classmethods (SDD-06)
+- All 6 sync port ABCs: `GraphRepository`, `EmbeddingProvider`, `LLMProvider`, `SearchPipeline`, `EntityResolutionStrategy`, `IngestionPipeline` (SDD-01 through SDD-05)
+- All 6 async port ABCs: `AsyncGraphRepository`, `AsyncEmbeddingProvider`, `AsyncLLMProvider`, `AsyncSearchPipeline`, `AsyncEntityResolutionStrategy`, `AsyncIngestionPipeline` — parallel independent interfaces (SDD-07)
+- All sync adapters: `PostgresGraphRepository`, `OpenAIProvider`, `OpenRouterProvider`, `DefaultSearchPipeline`, `DefaultEntityResolutionStrategy`, `DefaultIngestionPipeline` (SDD-02 through SDD-05)
+- All async adapters: `AsyncPostgresGraphRepository`, `AsyncOpenAIProvider`, `AsyncOpenRouterProvider`, `AsyncDefaultSearchPipeline`, `AsyncDefaultEntityResolutionStrategy`, `AsyncDefaultIngestionPipeline` (SDD-07)
+- Sync SDK delivery surface: `GraphSearch` facade wiring all 6 sync ports into `ingest()` / `search()` with `from_openai` / `from_openrouter` classmethods (SDD-06)
+- Async SDK delivery surface: `AsyncGraphSearch` facade wiring all 6 async ports into `await gs.ingest()` / `await gs.search()` with `async with await AsyncGraphSearch.from_openai(...)` (SDD-07)
 - Reusable test mock adapters: `InMemoryGraphRepository`, `FakeLLMProvider`, `FakeEmbeddingProvider`, `FakeEntityResolutionStrategy` in `tests/mocks/` (SDD-05)
-- 182 unit tests passing
+- 292 unit tests passing (182 sync + 110 async)
 
 **Explicitly excluded from v0.1:**
-- `api/` and `cli/` delivery surfaces (SDD-06+)
+- `api/` and `cli/` delivery surfaces
 - Packaging / PyPI distribution
 - Performance benchmarks or SLAs
 - Authentication / authorization
 - Multi-tenancy
+- `asyncio.gather` optimizations in async pipelines (future SDD)
+- Connection pooling (future SDD)
 
 ## Reading Guide
 

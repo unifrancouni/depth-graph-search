@@ -15,11 +15,12 @@ depth-graph-search has ten functional requirements spanning ingestion, search, a
 | FR-03 | Hybrid RAG Search | BM25 + embedding similarity, top N | ✅ |
 | FR-04 | Graph Traversal | BFS expansion from entry nodes, depth M | ✅ |
 | FR-05 | Search Pipeline | Configurable strategy orchestrating FR-02–FR-04 | ✅ |
-| FR-06 | SDK Interface | Python importable library | ✅ |
+| FR-06 | SDK Interface | Python importable library (sync) | ✅ |
 | FR-07 | HTTP API Interface | REST service exposing ingestion and search | ✅ |
 | FR-08 | CLI Interface | Command-line tool for ingestion and search | ✅ |
 | FR-09 | Docker Compose | Bundled PostgreSQL for local development | ✅ |
 | FR-10 | Entity Resolution | Deduplicate entities during ingestion against existing graph | ✅ |
+| FR-11 | Async SDK Interface | Async-native Python importable library for FastAPI/asyncio runtimes | ✅ |
 
 ---
 
@@ -232,9 +233,37 @@ Convenience classmethods handle real-world wiring (connection creation, `repo.in
 
 ---
 
+---
+
+## FR-11 — Async SDK Interface
+
+**Description**: Expose ingestion and search as an async-native importable Python library, fully usable from FastAPI, asyncio-native applications, and any async Python runtime without blocking the event loop.
+
+**Behavior**:
+- `from depth_graph_search import AsyncGraphSearch`
+- Caller uses `await AsyncGraphSearch.from_openai(dsn, api_key)` or `await AsyncGraphSearch.from_openrouter(...)` for real-world async wiring
+- Context manager: `async with await AsyncGraphSearch.from_openai(...) as gs:` ensures async connection cleanup
+- Calls `await gs.ingest(text, metadata)` and `await gs.search(query)` directly
+
+**Audience**: Python developers building FastAPI services, asyncio workers, or any async-first application on top of depth-graph-search.
+
+**Delivery (SDD-07)**: `AsyncGraphSearch` is the async public entry point for the SDK. Implemented in `src/depth_graph_search/sdk/async_client.py`. Importable as `from depth_graph_search import AsyncGraphSearch`.
+
+`AsyncGraphSearch` wires all 6 async ports into 2 async public methods:
+- `ingest(text: str, metadata: dict | None = None) -> None`
+- `search(query: str) -> list[Node]`
+
+Async convenience classmethods handle real-world async wiring:
+- `AsyncGraphSearch.from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)` — async classmethod
+- `AsyncGraphSearch.from_openrouter(dsn, api_key, openai_api_key=None, *, ...)` — async classmethod
+
+> **v0.1 scope**: Async stack is fully implemented end-to-end (SDD-07). No `asyncio.gather` parallelism yet — entity resolution and ingestion are sequential awaits. Connection pooling is deferred to a future SDD.
+
+---
+
 ## See Also
 
-- [Ingestion Flow](../flows/ingestion.md) — runtime sequence for FR-01 and FR-10
-- [Search Flow](../flows/search.md) — runtime sequence for FR-02 through FR-05
+- [Ingestion Flow](../flows/ingestion.md) — runtime sequence for FR-01, FR-10, and async variant
+- [Search Flow](../flows/search.md) — runtime sequence for FR-02 through FR-05 and async variant
 - [Non-Functional Requirements](./non-functional.md) — quality constraints across all FRs
 - [Architecture Layers](../architecture/layers.md) — which package implements each FR

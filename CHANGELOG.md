@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (SDD-07 — Full Async Stack)
+
+- **SDD-07 — Full Async Stack**: `AsyncGraphSearch` is the async-native public entry point — wires 6 async port ABCs into `await gs.ingest(...)` / `await gs.search(...)` with `async with await AsyncGraphSearch.from_openai(...) as gs:` context manager; 110 new unit tests — all 292 unit tests passing
+- `core/ports/async_ports.py` — 6 async ABCs (`AsyncGraphRepository`, `AsyncEmbeddingProvider`, `AsyncLLMProvider`, `AsyncEntityResolutionStrategy`, `AsyncIngestionPipeline`, `AsyncSearchPipeline`): all methods `async def @abstractmethod`; NO inheritance from sync ABCs; parallel independent interfaces
+- `adapters/postgres/async_repository.py` — `AsyncPostgresGraphRepository(AsyncGraphRepository)` (~240 LOC): uses `psycopg.AsyncConnection`; `fetchone()`/`fetchall()` are SYNC on `AsyncCursor` (no await); `register_vector_async` from `pgvector.psycopg`; `DuplicateSchema` suppressed via `contextlib.suppress`; all `psycopg.Error` → `StorageError`; pure helpers duplicated by design (not imported across adapters)
+- `adapters/openai/async_provider.py` — `AsyncOpenAIProvider(AsyncEmbeddingProvider, AsyncLLMProvider)` (~165 LOC): uses `openai.AsyncOpenAI`; `embed`, `embed_batch`, `extract_graph`, `complete`; imports `_map_extraction`, `EXTRACTION_SYSTEM_PROMPT` from sync `provider.py` (same-package import acceptable)
+- `adapters/openrouter/async_provider.py` — `AsyncOpenRouterProvider(AsyncLLMProvider)` (~120 LOC): uses `openai.AsyncOpenAI` with OpenRouter base_url; `extract_graph`, `complete`; same Pydantic models as sync counterpart
+- `adapters/search/async_pipeline.py` — `AsyncDefaultSearchPipeline(AsyncSearchPipeline)` (~90 LOC): mirrors sync pipeline with `await`; `embed → search_hybrid → traverse_bfs → dedup → [:top_n]`; scoring stays sync
+- `adapters/search/async_entity_resolution.py` — `AsyncDefaultEntityResolutionStrategy(AsyncEntityResolutionStrategy)` (~55 LOC): sequential `await pipeline.search(entity)` per entity; NO `asyncio.gather`; `resolve([])` returns `[]` immediately
+- `adapters/ingestion/async_pipeline.py` — `AsyncDefaultIngestionPipeline(AsyncIngestionPipeline)` (~110 LOC): mirrors 4-stage ingestion flow with `await`; `validate → extract_graph → embed_batch → resolve → save`; returns `None` (simplified from sync IngestionResult)
+- `sdk/async_client.py` — `AsyncGraphSearch` (~220 LOC): sync `__init__` (port injection, no I/O); `async def ingest`, `async def search`, `async def close`; `__aenter__` returns `self`; `__aexit__` awaits `close()`; `async classmethod from_openai(dsn, api_key)` constructs all adapters + `await repo.initialize()` + returns ready instance; `async classmethod from_openrouter(dsn, api_key, openai_api_key)` same
+- `src/depth_graph_search/__init__.py` — 13 new async exports added to `__all__`: 6 async ABCs + `AsyncGraphSearch` + `AsyncOpenAIProvider` + `AsyncOpenRouterProvider` + `AsyncPostgresGraphRepository` + `AsyncDefaultEntityResolutionStrategy` + `AsyncDefaultIngestionPipeline` + `AsyncDefaultSearchPipeline`
+- `pyproject.toml` — `pytest-asyncio>=0.23` added to dev deps; `asyncio_mode = "auto"` added under `[tool.pytest.ini_options]`
+- `tests/unit/adapters/test_async_postgres_repository.py` — 35 unit tests (AsyncMock for `psycopg.AsyncConnection`)
+- `tests/unit/adapters/test_async_openai_provider.py` — 21 unit tests (AsyncMock for `openai.AsyncOpenAI`)
+- `tests/unit/adapters/test_async_openrouter_provider.py` — 12 unit tests (AsyncMock for `openai.AsyncOpenAI` with OpenRouter base_url)
+- `tests/unit/adapters/test_async_search_pipeline.py` — 9 unit tests
+- `tests/unit/adapters/test_async_entity_resolution.py` — 7 unit tests
+- `tests/unit/test_async_ingestion_pipeline.py` — 11 unit tests
+- `tests/unit/sdk/test_async_client.py` — 17 unit tests
+- `tests/integration/adapters/test_async_postgres_repository.py` — 8 integration tests (require Docker; `AsyncConnection.connect(dsn)`)
+- `tests/integration/conftest.py` — `async_pg_connection` + `async_repository` fixtures using `pytest_asyncio.fixture`
+- **292 total unit tests passing** (110 new async tests + 182 pre-existing; 0 failed, 0 skipped; existing sync stack unaffected)
+
+---
+
 ### Added (SDD-06 — SDK Facade)
 
 - **SDD-06 — SDK Facade**: `GraphSearch` is the high-level public entry point for the SDK — wires all 6 ports into a 2-method public API (`ingest`, `search`); `from_openai` and `from_openrouter` classmethods handle real-world wiring; context manager pattern recommended for connection cleanup; 28 new unit tests — all 182 unit tests passing
