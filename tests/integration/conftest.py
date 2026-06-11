@@ -5,17 +5,21 @@ container built from ``Dockerfile.dev`` at the repo root.
 
 Fixtures:
     pg_container (session-scoped): Starts the container once per test session.
-    connection (function-scoped): Fresh psycopg3 connection per test.
+    connection (function-scoped): Fresh psycopg3 sync connection per test.
     repository (function-scoped): Initialized ``PostgresGraphRepository`` per test.
+    async_pg_connection (function-scoped): Fresh psycopg3 async connection per test.
+    async_repository (function-scoped): Initialized ``AsyncPostgresGraphRepository`` per test.
 """
 
 from __future__ import annotations
 
 import psycopg
 import pytest
+import pytest_asyncio
 from testcontainers.core.image import DockerImage
 from testcontainers.postgres import PostgresContainer
 
+from depth_graph_search.adapters.postgres.async_repository import AsyncPostgresGraphRepository
 from depth_graph_search.adapters.postgres.repository import PostgresGraphRepository
 
 # ---------------------------------------------------------------------------
@@ -42,7 +46,7 @@ def pg_container():  # type: ignore[return]
 
 
 # ---------------------------------------------------------------------------
-# Function-scoped psycopg3 connection
+# Function-scoped psycopg3 sync connection
 # ---------------------------------------------------------------------------
 
 
@@ -56,7 +60,7 @@ def connection(pg_container):  # type: ignore[return]
 
 
 # ---------------------------------------------------------------------------
-# Function-scoped repository (initialize() called each time for isolation)
+# Function-scoped sync repository (initialize() called each time for isolation)
 # ---------------------------------------------------------------------------
 
 
@@ -72,3 +76,35 @@ def repository(connection):  # type: ignore[return]
     repo.initialize()
     yield repo
     repo.close()
+
+
+# ---------------------------------------------------------------------------
+# Function-scoped psycopg3 async connection
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def async_pg_connection(pg_container):  # type: ignore[return]
+    """Open a fresh psycopg3 async connection to the test database."""
+    url = pg_container.get_connection_url(driver="psycopg")
+    conn = await psycopg.AsyncConnection.connect(url, autocommit=False)
+    yield conn
+    await conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Function-scoped async repository
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def async_repository(async_pg_connection):  # type: ignore[return]
+    """Initialized ``AsyncPostgresGraphRepository`` per test.
+
+    Calls ``await initialize()`` on each test so every test starts with the
+    schema in place. The connection is closed after each test.
+    """
+    repo = AsyncPostgresGraphRepository(connection=async_pg_connection)
+    await repo.initialize()
+    yield repo
+    await repo.close()
