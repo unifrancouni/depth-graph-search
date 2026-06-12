@@ -68,25 +68,26 @@ The dependency rule is enforced by convention in v0.1 (no import linter yet). An
 
 ## v0.1 Scope
 
-> **v0.1 scope**: Architecture, domain, all 6 sync ports + 6 async ports, all sync and async adapters, and both SDK delivery surfaces (`GraphSearch` + `AsyncGraphSearch`) are fully implemented. The ingestion and search pipelines are production-ready in both sync and async variants. `api/` and `cli/` surfaces are stubbed — deferred to future SDDs.
+> **v0.1 scope**: Architecture, domain, all 6 sync ports + 6 async ports, all sync and async adapters, both SDK delivery surfaces (`GraphSearch` + `AsyncGraphSearch`), and the HTTP API delivery surface are fully implemented. The ingestion and search pipelines are production-ready in both sync and async variants. `cli/` is stubbed — deferred to a future SDD.
 
 **Implemented in v0.1:**
 - 4 architecture docs (overview, layers, ports-and-adapters, strategies)
 - 1 decision record (ADR-001: PostgreSQL + AGE)
-- 2 requirements docs (functional FR-01–FR-10, non-functional)
+- 2 requirements docs (functional FR-01–FR-11, non-functional)
 - 2 flow docs (ingestion, search)
 - Domain layer: `Node`, `Edge`, `Embedding`, `Metadata`, `ScoredNode`, `ResolvedNode`, `IngestionResult` (SDD-01, SDD-05)
 - All 6 sync port ABCs: `GraphRepository`, `EmbeddingProvider`, `LLMProvider`, `SearchPipeline`, `EntityResolutionStrategy`, `IngestionPipeline` (SDD-01 through SDD-05)
-- All 6 async port ABCs: `AsyncGraphRepository`, `AsyncEmbeddingProvider`, `AsyncLLMProvider`, `AsyncSearchPipeline`, `AsyncEntityResolutionStrategy`, `AsyncIngestionPipeline` — parallel independent interfaces (SDD-07)
+- All 6 async port ABCs + `health_check()` on `AsyncGraphRepository`: `AsyncGraphRepository`, `AsyncEmbeddingProvider`, `AsyncLLMProvider`, `AsyncSearchPipeline`, `AsyncEntityResolutionStrategy`, `AsyncIngestionPipeline` — parallel independent interfaces (SDD-07, SDD-08)
 - All sync adapters: `PostgresGraphRepository`, `OpenAIProvider`, `OpenRouterProvider`, `DefaultSearchPipeline`, `DefaultEntityResolutionStrategy`, `DefaultIngestionPipeline` (SDD-02 through SDD-05)
 - All async adapters: `AsyncPostgresGraphRepository`, `AsyncOpenAIProvider`, `AsyncOpenRouterProvider`, `AsyncDefaultSearchPipeline`, `AsyncDefaultEntityResolutionStrategy`, `AsyncDefaultIngestionPipeline` (SDD-07)
 - Sync SDK delivery surface: `GraphSearch` facade wiring all 6 sync ports into `ingest()` / `search()` with `from_openai` / `from_openrouter` classmethods (SDD-06)
-- Async SDK delivery surface: `AsyncGraphSearch` facade wiring all 6 async ports into `await gs.ingest()` / `await gs.search()` with `async with await AsyncGraphSearch.from_openai(...)` (SDD-07)
+- Async SDK delivery surface: `AsyncGraphSearch` facade wiring all 6 async ports into `await gs.ingest()` / `await gs.search()` with `async with await AsyncGraphSearch.from_openai(...)` (SDD-07); parity fixed — both return `IngestionResult` / `list[ScoredNode]` (SDD-08)
+- HTTP API delivery surface: FastAPI `create_app()` factory, `POST /ingest`, `POST /search`, `GET /health`, pydantic-settings `Settings`, Docker container (SDD-08)
 - Reusable test mock adapters: `InMemoryGraphRepository`, `FakeLLMProvider`, `FakeEmbeddingProvider`, `FakeEntityResolutionStrategy` in `tests/mocks/` (SDD-05)
-- 292 unit tests passing (182 sync + 110 async)
+- 373 tests passing (362 unit + 11 integration API)
 
 **Explicitly excluded from v0.1:**
-- `api/` and `cli/` delivery surfaces
+- `cli/` delivery surface
 - Packaging / PyPI distribution
 - Performance benchmarks or SLAs
 - Authentication / authorization

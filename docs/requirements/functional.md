@@ -1,10 +1,10 @@
 # Functional Requirements
 
-> What the system must do: FR-01 through FR-09.
+> What the system must do: FR-01 through FR-11.
 
 ## Overview
 
-depth-graph-search has ten functional requirements spanning ingestion, search, and delivery surfaces. FR-01 through FR-05 define the core pipeline behavior. FR-06 through FR-08 define the three delivery surfaces. FR-09 defines the operational baseline. FR-10 defines entity resolution during ingestion.
+depth-graph-search has eleven functional requirements spanning ingestion, search, and delivery surfaces. FR-01 through FR-05 define the core pipeline behavior. FR-06 through FR-08 define the three delivery surfaces. FR-09 defines the operational baseline. FR-10 defines entity resolution during ingestion. FR-11 defines the async SDK.
 
 ## Requirements Summary
 
@@ -16,8 +16,8 @@ depth-graph-search has ten functional requirements spanning ingestion, search, a
 | FR-04 | Graph Traversal | BFS expansion from entry nodes, depth M | ✅ |
 | FR-05 | Search Pipeline | Configurable strategy orchestrating FR-02–FR-04 | ✅ |
 | FR-06 | SDK Interface | Python importable library (sync) | ✅ |
-| FR-07 | HTTP API Interface | REST service exposing ingestion and search | ✅ |
-| FR-08 | CLI Interface | Command-line tool for ingestion and search | ✅ |
+| FR-07 | HTTP API Interface | REST service — `POST /ingest`, `POST /search`, `GET /health` (SDD-08) | ✅ |
+| FR-08 | CLI Interface | Command-line tool for ingestion and search | 🔲 Planned |
 | FR-09 | Docker Compose | Bundled PostgreSQL for local development | ✅ |
 | FR-10 | Entity Resolution | Deduplicate entities during ingestion against existing graph | ✅ |
 | FR-11 | Async SDK Interface | Async-native Python importable library for FastAPI/asyncio runtimes | ✅ |
@@ -164,13 +164,16 @@ Convenience classmethods handle real-world wiring (connection creation, `repo.in
 
 **Description**: Expose ingestion and search as a REST API service.
 
-**Endpoints (minimum)**:
-- `POST /ingest` — FR-01 behavior over HTTP
-- `POST /search` — FR-05 behavior over HTTP, JSON body with search parameters
+**Endpoints**:
+- `POST /ingest` — FR-01 behavior over HTTP; body `{text, metadata?}`; response `{node_count, edge_count}`
+- `POST /search` — FR-05 behavior over HTTP; body `{query, top_n?, depth_m?, metadata_filter?}`; response `{results: [{id, content, metadata, score, distance}]}`
+- `GET /health` — liveness probe; response `{status: "ok"|"degraded", db: "connected"|"error"}`
 
-**Behavior**: HTTP layer is thin — no business logic. All processing delegates to the core via ports.
+**Behavior**: HTTP layer is thin — no business logic. All processing delegates to the core via ports. Exception-to-HTTP mapping: `ValidationError→422`, `IngestionError→500`, `LLMError→502`, `StorageError→503`. No domain internals (embeddings) leak into API responses.
 
-> **v0.1 scope**: Authentication, rate limiting, and pagination are not specified in v0.1.
+**Delivery (SDD-08)**: FastAPI `create_app()` factory in `src/depth_graph_search/api/__init__.py`. Configuration via pydantic-settings `Settings` in `api/config.py`. Installable as `pip install "depth-graph-search[api]"`. Docker: `Dockerfile` (multi-stage) + `docker-compose.yml` `api` service.
+
+> **v0.1 scope**: Authentication, rate limiting, and pagination are not specified in v0.1. Connection pooling is deferred to a future SDD (currently single async connection per process).
 
 ---
 
@@ -250,14 +253,17 @@ Convenience classmethods handle real-world wiring (connection creation, `repo.in
 **Delivery (SDD-07)**: `AsyncGraphSearch` is the async public entry point for the SDK. Implemented in `src/depth_graph_search/sdk/async_client.py`. Importable as `from depth_graph_search import AsyncGraphSearch`.
 
 `AsyncGraphSearch` wires all 6 async ports into 2 async public methods:
-- `ingest(text: str, metadata: dict | None = None) -> None`
-- `search(query: str) -> list[Node]`
+- `ingest(text: str, metadata: dict | None = None) -> IngestionResult` (SDD-08 parity fix — was `None`)
+- `search(query: str, top_n: int = 5, depth_m: int = 2, metadata_filter: dict | None = None) -> list[ScoredNode]` (SDD-08 parity fix — was `list[Node]`)
+
+Additional public interface:
+- `health_check() -> None` — delegates to `AsyncGraphRepository.health_check()`; raises `StorageError` if DB is down
 
 Async convenience classmethods handle real-world async wiring:
 - `AsyncGraphSearch.from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)` — async classmethod
 - `AsyncGraphSearch.from_openrouter(dsn, api_key, openai_api_key=None, *, ...)` — async classmethod
 
-> **v0.1 scope**: Async stack is fully implemented end-to-end (SDD-07). No `asyncio.gather` parallelism yet — entity resolution and ingestion are sequential awaits. Connection pooling is deferred to a future SDD.
+> **v0.1 scope**: Async stack is fully implemented end-to-end (SDD-07). Async parity fixed in SDD-08 — `ingest()` and `search()` now return the same types as the sync `GraphSearch` facade. No `asyncio.gather` parallelism yet — entity resolution and ingestion are sequential awaits. Connection pooling is deferred to a future SDD.
 
 ---
 

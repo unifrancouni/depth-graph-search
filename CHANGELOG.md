@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (SDD-08 — HTTP API + Environment Configuration)
+
+- **SDD-08 — HTTP API + Environment Configuration**: FastAPI HTTP service exposing `AsyncGraphSearch` over REST, environment-driven configuration via pydantic-settings, Docker API container, async parity fixes for search/ingest return types — 373 tests passing (362 unit + 11 integration API)
+- `src/depth_graph_search/api/config.py` — `Settings(BaseSettings)`: 11 env vars (`DATABASE_URL`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `LLM_PROVIDER`, `LLM_MODEL`, `EMBEDDING_MODEL`, `GRAPH_NAME`, `EMBEDDING_DIMENSIONS`, `API_HOST`, `API_PORT`, `LOG_LEVEL`); `@field_validator` for PostgreSQL DSN; `@model_validator` for OPENROUTER_API_KEY conditional; reads from `.env` file
+- `src/depth_graph_search/api/schemas.py` — `IngestRequest`, `IngestResponse`, `SearchRequest` (`Field(ge=1)` on `top_n`), `SearchResultItem` (no `embedding` field), `SearchResponse`, `HealthResponse` — Pydantic DTOs that never expose domain internals
+- `src/depth_graph_search/api/exceptions.py` — `register_exception_handlers(app)`: `ValidationError→422`, `IngestionError→500`, `LLMError→502`, `StorageError→503`; no stack traces in responses
+- `src/depth_graph_search/api/lifespan.py` — `@asynccontextmanager lifespan(app)`: builds `AsyncGraphSearch` via `from_openai` or `from_openrouter` based on `settings.llm_provider`; stores in `app.state.graph_search`; calls `await gs.close()` on shutdown; `assert` instead of `# type: ignore` for openrouter key
+- `src/depth_graph_search/api/dependencies.py` — `get_graph_search(request: Request) -> AsyncGraphSearch` for `Depends()`
+- `src/depth_graph_search/api/__init__.py` — `create_app(settings: Settings | None = None) -> FastAPI` factory; registers lifespan, exception handlers, and all routers
+- `src/depth_graph_search/api/routes/__init__.py` — empty package init
+- `src/depth_graph_search/api/routes/health.py` — `GET /health`: calls `gs.health_check()` public method; returns `HealthResponse(status="ok", db="connected")` on success, `JSONResponse(503, ...)` on `StorageError`
+- `src/depth_graph_search/api/routes/ingest.py` — `POST /ingest`: accepts `IngestRequest`, calls `await gs.ingest(body.text, body.metadata)`, returns `IngestResponse(node_count, edge_count)`
+- `src/depth_graph_search/api/routes/search.py` — `POST /search`: accepts `SearchRequest`, calls `await gs.search(...)`, maps `list[ScoredNode]` → `SearchResponse` with `embedding` excluded
+- `.env.example` — all 11 env vars with type, default, and required/optional inline comments
+- `Dockerfile` — multi-stage build (`python:3.11-slim` builder → final); installs `.[api]`; non-root `appuser`; `EXPOSE 8000`; `CMD uvicorn depth_graph_search.api:create_app --factory`
+- `tests/unit/api/__init__.py` — empty package init
+- `tests/unit/api/test_config.py` — 22 unit tests: all `Settings` spec scenarios via `model_validate()` (bypasses `.env` file)
+- `tests/unit/api/test_schemas.py` — 30 unit tests: IngestRequest text required, SearchRequest defaults/constraints, SearchResultItem excludes embedding, HealthResponse Literal validation
+- `tests/unit/api/test_exceptions.py` — 13 unit tests: async handlers called directly with MagicMock; status codes and generic bodies verified
+- `tests/integration/api/__init__.py` — empty package init
+- `tests/integration/api/test_api.py` — 11 integration tests: all 3 endpoints (ingest, search, health) via `httpx.AsyncClient` + `ASGITransport(app=create_app(test_settings))`; health degraded path mocked
+
+### Changed (SDD-08)
+
+- `src/depth_graph_search/core/ports/async_ports.py` — `AsyncSearchPipeline.search()` return type `list[Node]` → `list[ScoredNode]`; `AsyncIngestionPipeline.ingest()` return type `None` → `IngestionResult`; `AsyncGraphRepository.health_check()` new abstract method added
+- `src/depth_graph_search/adapters/search/async_pipeline.py` — `AsyncDefaultSearchPipeline.search()` now adds rank-based scoring: entry nodes `score=1.0 - rank/(top_n+1), distance=0`; BFS-only nodes `score=0.0, distance=1`; sorted by `(-score, distance)` and sliced `[:top_n]`; returns `list[ScoredNode]`
+- `src/depth_graph_search/adapters/ingestion/async_pipeline.py` — `AsyncDefaultIngestionPipeline.ingest()` returns `IngestionResult(node_count, edge_count)` instead of `None`; fast-path returns `IngestionResult(0, 0)`
+- `src/depth_graph_search/adapters/postgres/async_repository.py` — `health_check()` method implemented: executes `SELECT 1` to verify DB connectivity
+- `src/depth_graph_search/sdk/async_client.py` — `search()` return annotation updated to `list[ScoredNode]`; `ingest()` return annotation updated to `IngestionResult`; `repository` public property added; TYPE_CHECKING imports updated
+- `pyproject.toml` — `[project.optional-dependencies] api = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "pydantic-settings>=2.0"]`; `[[tool.mypy.overrides]] module = "uvicorn.*" ignore_missing_imports = true`
+- `docker-compose.yml` — added `api` service: `build: .`, `dockerfile: Dockerfile`, ports `8000:8000`, `env_file: .env`, `depends_on: postgres: condition: service_healthy`
+- **373 total tests passing** (362 unit + 11 integration API; 76 new tests from SDD-08)
+
+---
+
 ### Added (SDD-07 — Full Async Stack)
 
 - **SDD-07 — Full Async Stack**: `AsyncGraphSearch` is the async-native public entry point — wires 6 async port ABCs into `await gs.ingest(...)` / `await gs.search(...)` with `async with await AsyncGraphSearch.from_openai(...) as gs:` context manager; 110 new unit tests — all 292 unit tests passing

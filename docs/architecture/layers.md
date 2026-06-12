@@ -71,7 +71,7 @@ graph TD
 | **Delivery — API** | `api/` | `core/ports/`, `core/domain/` |
 | **Delivery — CLI** | `cli/` | `core/ports/`, `core/domain/` |
 
-> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02, SDD-07 async). `adapters/openai/` and `adapters/openrouter/` are fully implemented with both sync and async variants (SDD-03, SDD-07). `adapters/search/` is fully implemented (SDD-04, SDD-07 async). `adapters/ingestion/` is fully implemented (SDD-05, SDD-07 async). **SDK delivery surface** (`sdk/`) ships both `GraphSearch` (sync, SDD-06) and `AsyncGraphSearch` (async, SDD-07). `api/` and `cli/` are stubbed — deferred to future SDDs.
+> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02, SDD-07 async). `adapters/openai/` and `adapters/openrouter/` are fully implemented with both sync and async variants (SDD-03, SDD-07). `adapters/search/` is fully implemented (SDD-04, SDD-07 async). `adapters/ingestion/` is fully implemented (SDD-05, SDD-07 async). **SDK delivery surface** (`sdk/`) ships both `GraphSearch` (sync, SDD-06) and `AsyncGraphSearch` (async, SDD-07, SDD-08). **HTTP API delivery surface** (`api/`) ships `create_app()`, `POST /ingest`, `POST /search`, `GET /health`, pydantic-settings config (SDD-08). `cli/` is stubbed — deferred to a future SDD.
 
 ## Domain Entities
 
@@ -187,6 +187,34 @@ async with await AsyncGraphSearch.from_openai("postgresql://...", "sk-...") as g
 1. `_search_pipeline = AsyncDefaultSearchPipeline(async_repository, async_embedding_provider)`
 2. `_entity_resolution = AsyncDefaultEntityResolutionStrategy(_search_pipeline)`
 3. `_ingestion_pipeline = AsyncDefaultIngestionPipeline(async_llm_provider, async_embedding_provider, async_repository, _entity_resolution)`
+
+### HTTP API — FastAPI Service (SDD-08)
+
+The HTTP API delivery surface wraps `AsyncGraphSearch` as a REST service. It is the only delivery surface that reads environment variables — the SDK and adapters remain env-var-free.
+
+```python
+from depth_graph_search.api import create_app
+
+app = create_app()   # reads Settings from env / .env file
+# Exposes: POST /ingest, POST /search, GET /health
+```
+
+**Key modules**:
+
+| Module | Role |
+|--------|------|
+| `api/config.py` | `Settings(BaseSettings)` — single source of truth for 11 env vars; validates at import time |
+| `api/schemas.py` | Request/response DTOs (`IngestRequest`, `SearchRequest`, `SearchResponse`, etc.) — never expose domain internals (no `embedding` in responses) |
+| `api/lifespan.py` | `@asynccontextmanager lifespan(app)` — builds `AsyncGraphSearch` on startup, calls `gs.close()` on shutdown |
+| `api/dependencies.py` | `get_graph_search(request) -> AsyncGraphSearch` for FastAPI `Depends()` injection |
+| `api/exceptions.py` | Maps domain exceptions to HTTP codes: `ValidationError→422`, `IngestionError→500`, `LLMError→502`, `StorageError→503` |
+| `api/routes/` | Thin route handlers — one file per endpoint group |
+
+**Design principles**:
+- `create_app(settings)` is a factory — testable, configurable, no import-time side effects
+- DTOs in `api/schemas.py` are independent of domain entities — `embedding` field is deliberately excluded
+- Dependency injection via `Depends(get_graph_search)` — routes never access `app.state` directly
+- Docker: `Dockerfile` (multi-stage, non-root) + `docker-compose.yml` `api` service depending on `postgres` healthcheck
 
 ## See Also
 

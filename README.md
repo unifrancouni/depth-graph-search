@@ -4,13 +4,13 @@
 
 Most RAG systems stop at similarity. Depth Graph Search goes further — it navigates relationships. Instead of treating documents as isolated chunks, it models data as a connected graph, unlocking contextual reasoning across linked entities, improved recall for complex queries, and more grounded LLM outputs.
 
-> **Status**: v0.1 — SDK (sync + async) is functional. API and CLI interfaces are planned.
+> **Status**: v0.1 — SDK (sync + async) and HTTP API are functional. CLI interface is planned.
 
 ---
 
 ## Get Started
 
-### 1. Start the database
+### 1. Start the database (and API)
 
 The engine requires PostgreSQL 17 with [Apache AGE](https://age.apache.org/) (graph) and [pgvector](https://github.com/pgvector/pgvector) (embeddings).
 
@@ -19,10 +19,11 @@ The fastest way is Docker Compose:
 ```bash
 git clone https://github.com/francougarte/depth-graph-search.git
 cd depth-graph-search
-docker compose up -d
+cp .env.example .env          # fill in OPENAI_API_KEY (and DATABASE_URL if not using Docker)
+docker compose up -d          # starts postgres + api (port 8000)
 ```
 
-This starts a PostgreSQL instance with both extensions pre-installed. Default credentials:
+This starts a PostgreSQL instance with both extensions pre-installed, and the FastAPI service at `http://localhost:8000`. Default credentials:
 
 | Variable | Value |
 |----------|-------|
@@ -44,6 +45,14 @@ Or install from source in development mode:
 
 ```bash
 pip install -e ".[dev]"
+```
+
+To include HTTP API dependencies:
+
+```bash
+pip install "depth-graph-search[api]"
+# or from source:
+pip install -e ".[api]"
 ```
 
 **Requirements**: Python 3.11+
@@ -101,11 +110,37 @@ async def main():
 asyncio.run(main())
 ```
 
+### 5. HTTP API usage
+
+When running via Docker Compose (or `uvicorn depth_graph_search.api:create_app --factory`), the HTTP API is available at `http://localhost:8000`.
+
+```bash
+# Ingest text
+curl -X POST http://localhost:8000/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Marie Curie won the Nobel Prize in Physics in 1903.", "metadata": {"source": "wiki"}}'
+# → {"node_count": 2, "edge_count": 1}
+
+# Search
+curl -X POST http://localhost:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Nobel Prize winners", "top_n": 5}'
+# → {"results": [{"id": "...", "content": "...", "metadata": {}, "score": 0.833, "distance": 0}]}
+
+# Health check
+curl http://localhost:8000/health
+# → {"status": "ok", "db": "connected"}
+```
+
+OpenAPI docs are available at `http://localhost:8000/docs`.
+
 ---
 
 ## Configuration Reference
 
-All configuration is passed explicitly — no env vars, no config files.
+### SDK — explicit parameters
+
+When using the SDK directly, all configuration is passed explicitly — no env vars, no config files.
 
 ### Factory classmethods
 
@@ -133,6 +168,24 @@ All configuration is passed explicitly — no env vars, no config files.
 |-----------|---------|-------------|
 | `text` | *required* | Free text to ingest |
 | `metadata` | `None` | Optional `dict` attached to every node created from this text |
+
+### HTTP API — environment variables
+
+When running the HTTP API service, configuration is read from environment variables (or a `.env` file). Copy `.env.example` to `.env` and fill in the required values.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | **Yes** | — | PostgreSQL DSN (`postgresql://` or `postgresql+psycopg://`) |
+| `OPENAI_API_KEY` | **Yes** | — | OpenAI API key (used for embeddings always) |
+| `OPENROUTER_API_KEY` | No | `None` | Required when `LLM_PROVIDER=openrouter` |
+| `LLM_PROVIDER` | No | `openai` | `openai` or `openrouter` |
+| `LLM_MODEL` | No | `gpt-4o` | Chat completion model |
+| `EMBEDDING_MODEL` | No | `text-embedding-3-large` | Embedding model |
+| `GRAPH_NAME` | No | `knowledge_graph` | Apache AGE graph name |
+| `EMBEDDING_DIMENSIONS` | No | `3072` | Vector dimensions (must match embedding model) |
+| `API_HOST` | No | `0.0.0.0` | Uvicorn bind host |
+| `API_PORT` | No | `8000` | Uvicorn bind port |
+| `LOG_LEVEL` | No | `info` | Log level: `debug`, `info`, `warning`, `error` |
 
 ---
 
@@ -192,11 +245,11 @@ graph LR
 
 | Interface | Status | Description |
 |-----------|--------|-------------|
-| **SDK** | Available | `from depth_graph_search import GraphSearch, AsyncGraphSearch` |
-| **API** | Planned | HTTP endpoints for ingestion and search |
+| **SDK** | ✅ Available | `from depth_graph_search import GraphSearch, AsyncGraphSearch` |
+| **HTTP API** | ✅ Available | `POST /ingest`, `POST /search`, `GET /health` — FastAPI + uvicorn |
 | **CLI** | Planned | Terminal commands for quick ingestion and search |
 
-All three will share the same core — no logic duplication.
+All three share the same core — no logic duplication.
 
 ---
 

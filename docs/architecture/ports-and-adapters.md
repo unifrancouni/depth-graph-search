@@ -152,6 +152,7 @@ All async ABCs live in `src/depth_graph_search/core/ports/async_ports.py`.
 | `get_node` | `node_id: str` | `Node \| None` | Retrieve a Node by ID. Returns `None` if not found. |
 | `search_hybrid` | `query_embedding: list[float]`, `query_text: str`, `limit: int` | `list[Node]` | BM25 + dense vector hybrid search. |
 | `traverse_bfs` | `start_node_id: str`, `max_depth: int` | `list[Node]` | BFS graph expansion. |
+| `health_check` | — | `None` | Verify DB connectivity. Raises `StorageError` if the connection is down. Added SDD-08 for the HTTP health endpoint. |
 | `close` | — | `None` | Close the async connection. Idempotent. |
 
 ### `AsyncEmbeddingProvider`
@@ -178,25 +179,26 @@ All async ABCs live in `src/depth_graph_search/core/ports/async_ports.py`.
 
 | Method | Parameters | Return Type | Description |
 |--------|------------|-------------|-------------|
-| `ingest` | `text: str`, `metadata: dict` | `None` | Execute the full async ingestion flow. |
+| `ingest` | `text: str`, `metadata: dict` | `IngestionResult` | Execute the full async ingestion flow. Returns `IngestionResult(node_count, edge_count)`. Updated SDD-08 (was `None`). |
 
 ### `AsyncSearchPipeline`
 
 | Method | Parameters | Return Type | Description |
 |--------|------------|-------------|-------------|
-| `search` | `query: str` | `list[Node]` | Execute the full async search flow. |
+| `search` | `query: str`, `top_n: int`, `depth_m: int`, `metadata_filter: dict \| None` | `list[ScoredNode]` | Execute the full async search flow with rank-based scoring. Updated SDD-08 (was `list[Node]`). |
 
-## Async Adapter Mapping (SDD-07)
+## Async Adapter Mapping (SDD-07 / SDD-08)
 
 | Adapter | Implements | Technology | Package | Status |
 |---------|------------|------------|---------|--------|
-| `AsyncPostgresGraphRepository` | `AsyncGraphRepository` | psycopg.AsyncConnection + pgvector async | `adapters/postgres/` | ✅ Implemented (SDD-07) |
+| `AsyncPostgresGraphRepository` | `AsyncGraphRepository` | psycopg.AsyncConnection + pgvector async | `adapters/postgres/` | ✅ Implemented (SDD-07, SDD-08 `health_check`) |
 | `AsyncOpenAIProvider` | `AsyncEmbeddingProvider`, `AsyncLLMProvider` | openai.AsyncOpenAI | `adapters/openai/` | ✅ Implemented (SDD-07) |
 | `AsyncOpenRouterProvider` | `AsyncLLMProvider` | openai.AsyncOpenAI + OpenRouter base_url | `adapters/openrouter/` | ✅ Implemented (SDD-07) |
-| `AsyncDefaultSearchPipeline` | `AsyncSearchPipeline` | Pure Python Async Orchestrator | `adapters/search/` | ✅ Implemented (SDD-07) |
+| `AsyncDefaultSearchPipeline` | `AsyncSearchPipeline` | Pure Python Async Orchestrator | `adapters/search/` | ✅ Implemented (SDD-07, SDD-08 `list[ScoredNode]`) |
 | `AsyncDefaultEntityResolutionStrategy` | `AsyncEntityResolutionStrategy` | Pure Python Async Orchestrator | `adapters/search/` | ✅ Implemented (SDD-07) |
-| `AsyncDefaultIngestionPipeline` | `AsyncIngestionPipeline` | Pure Python Async Orchestrator | `adapters/ingestion/` | ✅ Implemented (SDD-07) |
-| `AsyncGraphSearch` | Async SDK Facade | Pure Python Async Wiring Layer | `sdk/async_client.py` | ✅ Implemented (SDD-07) |
+| `AsyncDefaultIngestionPipeline` | `AsyncIngestionPipeline` | Pure Python Async Orchestrator | `adapters/ingestion/` | ✅ Implemented (SDD-07, SDD-08 `IngestionResult`) |
+| `AsyncGraphSearch` | Async SDK Facade | Pure Python Async Wiring Layer | `sdk/async_client.py` | ✅ Implemented (SDD-07, SDD-08 parity) |
+| `FastAPI HTTP API` | HTTP Delivery Surface | FastAPI + uvicorn + pydantic-settings | `api/` | ✅ Implemented (SDD-08) |
 
 **Critical psycopg3 async gotcha**: In psycopg3, `AsyncCursor.fetchone()` and `AsyncCursor.fetchall()` are **synchronous** methods — only `execute()` is async. The async repository calls `cursor = await conn.execute(sql)` then `cursor.fetchone()` without `await`.
 
@@ -215,6 +217,25 @@ All async ABCs live in `src/depth_graph_search/core/ports/async_ports.py`.
 - Accepts `AsyncSearchPipeline` (not `DefaultSearchPipeline` — decoupled from concrete class).
 - Sequential `await pipeline.search(entity)` per entity — deliberately avoids `asyncio.gather` for v0.1.
 - `resolve([])` returns `[]` immediately without calling `search`.
+
+**`AsyncDefaultSearchPipeline` scoring notes** (SDD-08):
+- Fixed async parity: now returns `list[ScoredNode]` instead of `list[Node]`.
+- Rank-based scoring identical to sync `DefaultSearchPipeline`: `score=1.0 - rank/(top_n+1)` for entry nodes (`distance=0`); `score=0.0` for BFS-only nodes (`distance=1`). Sorted by `(-score, distance)`, sliced `[:top_n]`.
+
+**`AsyncDefaultIngestionPipeline` return type** (SDD-08):
+- Fixed async parity: `ingest()` now returns `IngestionResult(node_count, edge_count)` instead of `None`.
+- Empty extraction fast-path returns `IngestionResult(0, 0)`.
+
+**`AsyncPostgresGraphRepository.health_check()` notes** (SDD-08):
+- New method implementing `AsyncGraphRepository.health_check()`.
+- Executes `SELECT 1` via the async connection. Raises `StorageError` on any psycopg error.
+- Used by `GET /health` route to probe DB liveness without going through the full SDK stack.
+
+**`AsyncGraphSearch` parity notes** (SDD-08):
+- `search()` return annotation updated to `list[ScoredNode]` (was `list[Node]`).
+- `ingest()` return annotation updated to `IngestionResult` (was `None`).
+- New `repository` public property exposes the underlying `AsyncGraphRepository` for health checks.
+- `health_check()` method delegates to the repository's `health_check()`.
 
 ## Why This Architecture
 
