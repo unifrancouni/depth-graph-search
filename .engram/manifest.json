@@ -64,6 +64,14 @@
       "sessions": 1,
       "memories": 11,
       "prompts": 16
+    },
+    {
+      "id": "a993a7cc",
+      "created_by": "francougarte",
+      "created_at": "2026-06-12T22:55:51Z",
+      "sessions": 2,
+      "memories": 11,
+      "prompts": 24
     }
   ]
 }
