@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from depth_graph_search.adapters.search.async_pipeline import AsyncDefaultSearchPipeline
-from depth_graph_search.core.domain.entities import Embedding, Node
+from depth_graph_search.core.domain.entities import Embedding, Node, ScoredNode
 from depth_graph_search.core.ports.async_ports import AsyncSearchPipeline
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ class TestSearchPipeline:
 
         repo.traverse_bfs.assert_awaited_once_with(entry, 2)
 
-    async def test_search_returns_list_of_nodes(self) -> None:
+    async def test_search_returns_list_of_scored_nodes(self) -> None:
         entry = [_make_node("n1")]
         bfs = [_make_node("n1"), _make_node("n2")]
         pipeline, repo, embedder = _make_pipeline(
@@ -102,6 +102,23 @@ class TestSearchPipeline:
 
         assert isinstance(result, list)
         assert len(result) <= 5
+        assert all(isinstance(sn, ScoredNode) for sn in result)
+
+    async def test_search_scored_nodes_have_score_and_distance(self) -> None:
+        entry = [_make_node("n1")]
+        pipeline, repo, embedder = _make_pipeline(
+            search_hybrid_return=entry,
+            traverse_bfs_return=entry,
+        )
+
+        result = await pipeline.search("query", top_n=5)
+
+        assert len(result) >= 1
+        sn = result[0]
+        assert isinstance(sn.score, float)
+        assert isinstance(sn.distance, int)
+        assert 0.0 <= sn.score <= 1.0
+        assert sn.distance == 0  # entry node
 
     async def test_search_deduplicates_results(self) -> None:
         """Nodes appearing in both entry and BFS should not be duplicated."""
@@ -113,7 +130,7 @@ class TestSearchPipeline:
 
         result = await pipeline.search("query", top_n=5)
 
-        ids = [n.id for n in result]
+        ids = [sn.node.id for sn in result]
         assert len(ids) == len(set(ids))
 
     async def test_search_respects_top_n(self) -> None:

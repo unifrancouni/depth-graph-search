@@ -11,12 +11,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from depth_graph_search.core.domain.entities import Node
+from depth_graph_search.core.domain.entities import IngestionResult, Node, ScoredNode
 from depth_graph_search.sdk.async_client import AsyncGraphSearch
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+_DEFAULT_INGESTION_RESULT = IngestionResult(node_count=2, edge_count=1)
 
 
 def _make_async_ports():
@@ -28,7 +31,7 @@ def _make_async_ports():
     ingestion = AsyncMock()
     search = AsyncMock()
     search.search.return_value = []
-    ingestion.ingest.return_value = None
+    ingestion.ingest.return_value = _DEFAULT_INGESTION_RESULT
     return repo, embedder, llm, ingestion, search
 
 
@@ -44,7 +47,7 @@ def _make_gs_injected(
         llm = AsyncMock()
     if ingestion is None:
         ingestion = AsyncMock()
-        ingestion.ingest.return_value = None
+        ingestion.ingest.return_value = _DEFAULT_INGESTION_RESULT
     if search is None:
         search = AsyncMock()
         search.search.return_value = []
@@ -127,16 +130,17 @@ class TestConstructor:
 class TestIngest:
     async def test_ingest_delegates_to_pipeline(self) -> None:
         ingestion = AsyncMock()
-        ingestion.ingest.return_value = None
+        ingestion.ingest.return_value = IngestionResult(node_count=1, edge_count=0)
         gs = _make_gs_injected(ingestion=ingestion)
 
-        await gs.ingest("test text", {"source": "doc"})
+        result = await gs.ingest("test text", {"source": "doc"})
 
         ingestion.ingest.assert_awaited_once_with("test text", {"source": "doc"})
+        assert isinstance(result, IngestionResult)
 
     async def test_ingest_with_none_metadata(self) -> None:
         ingestion = AsyncMock()
-        ingestion.ingest.return_value = None
+        ingestion.ingest.return_value = IngestionResult(node_count=0, edge_count=0)
         gs = _make_gs_injected(ingestion=ingestion)
 
         await gs.ingest("text")
@@ -145,12 +149,24 @@ class TestIngest:
 
     async def test_ingest_awaits_pipeline(self) -> None:
         ingestion = AsyncMock()
-        ingestion.ingest.return_value = None
+        ingestion.ingest.return_value = IngestionResult(node_count=0, edge_count=0)
         gs = _make_gs_injected(ingestion=ingestion)
 
         await gs.ingest("text")
 
         assert ingestion.ingest.await_count == 1
+
+    async def test_ingest_returns_ingestion_result(self) -> None:
+        """AsyncGraphSearch.ingest() must return IngestionResult, not None."""
+        ingestion = AsyncMock()
+        ingestion.ingest.return_value = IngestionResult(node_count=3, edge_count=2)
+        gs = _make_gs_injected(ingestion=ingestion)
+
+        result = await gs.ingest("text with entities")
+
+        assert isinstance(result, IngestionResult)
+        assert result.node_count == 3
+        assert result.edge_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -161,14 +177,25 @@ class TestIngest:
 class TestSearch:
     async def test_search_delegates_to_pipeline(self) -> None:
         search = AsyncMock()
-        node = Node(content="result")
-        search.search.return_value = [node]
+        scored = ScoredNode(node=Node(content="result"), score=0.9, distance=0)
+        search.search.return_value = [scored]
         gs = _make_gs_injected(search=search)
 
         result = await gs.search("query")
 
-        assert result == [node]
+        assert result == [scored]
         search.search.assert_awaited_once()
+
+    async def test_search_returns_list_of_scored_nodes(self) -> None:
+        search = AsyncMock()
+        scored = ScoredNode(node=Node(content="result"), score=0.8, distance=0)
+        search.search.return_value = [scored]
+        gs = _make_gs_injected(search=search)
+
+        result = await gs.search("query")
+
+        assert isinstance(result, list)
+        assert all(isinstance(sn, ScoredNode) for sn in result)
 
     async def test_search_passes_params_to_pipeline(self) -> None:
         search = AsyncMock()
@@ -219,7 +246,7 @@ class TestContextManager:
     async def test_context_manager_usage(self) -> None:
         repo = AsyncMock()
         ingestion = AsyncMock()
-        ingestion.ingest.return_value = None
+        ingestion.ingest.return_value = IngestionResult(node_count=0, edge_count=0)
         gs = _make_gs_injected(repo=repo, ingestion=ingestion)
 
         async with gs as facade:

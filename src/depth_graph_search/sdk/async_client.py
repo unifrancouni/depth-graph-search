@@ -29,7 +29,7 @@ from depth_graph_search.core.ports.async_ports import (
 )
 
 if TYPE_CHECKING:
-    from depth_graph_search.core.domain.entities import Metadata, Node
+    from depth_graph_search.core.domain.entities import IngestionResult, Metadata, ScoredNode
 
 
 class AsyncGraphSearch:
@@ -106,6 +106,19 @@ class AsyncGraphSearch:
                 entity_resolution=entity_resolution,
             )
         self._ingestion_pipeline = ingestion_pipeline
+
+    # ------------------------------------------------------------------
+    # Public properties
+    # ------------------------------------------------------------------
+
+    @property
+    def repository(self) -> AsyncGraphRepository:
+        """The underlying ``AsyncGraphRepository`` adapter.
+
+        Exposed for infrastructure concerns (e.g. health checks) that need
+        direct repository access without going through the pipeline layer.
+        """
+        return self._repository
 
     # ------------------------------------------------------------------
     # Async context manager protocol
@@ -251,7 +264,7 @@ class AsyncGraphSearch:
         self,
         text: str,
         metadata: "Metadata | None" = None,
-    ) -> None:
+    ) -> "IngestionResult":
         """Ingest raw text into the knowledge graph.
 
         Delegates to the internal ``AsyncDefaultIngestionPipeline``.
@@ -260,10 +273,13 @@ class AsyncGraphSearch:
             text: The raw text to ingest. MUST be non-empty and non-whitespace-only.
             metadata: Free-form key-value context. ``None`` is accepted.
 
+        Returns:
+            ``IngestionResult(node_count, edge_count)``.
+
         Raises:
             ValidationError: If ``text`` is empty or whitespace-only.
         """
-        await self._ingestion_pipeline.ingest(text, metadata)
+        return await self._ingestion_pipeline.ingest(text, metadata)
 
     async def search(
         self,
@@ -271,7 +287,7 @@ class AsyncGraphSearch:
         top_n: int = 5,
         depth_m: int = 2,
         metadata_filter: "Metadata | None" = None,
-    ) -> "list[Node]":
+    ) -> "list[ScoredNode]":
         """Execute a hybrid graph search.
 
         Delegates to the internal ``AsyncDefaultSearchPipeline``.
@@ -283,7 +299,8 @@ class AsyncGraphSearch:
             metadata_filter: Key-value dict to pre-filter candidate nodes.
 
         Returns:
-            At most ``top_n`` ``Node`` instances.
+            At most ``top_n`` ``ScoredNode`` instances ordered by score DESC,
+            distance ASC.
         """
         return await self._search_pipeline.search(
             query=query,

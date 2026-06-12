@@ -6,6 +6,8 @@ Design decisions:
   and AsyncEmbeddingProvider.
 - Constructor has ZERO side effects: stores injected dependencies only.
 - Scoring/ranking stays synchronous (pure CPU) — no await.
+- Rank-based scoring: entry nodes get score=1.0 - rank/(top_n+1), distance=0;
+  BFS-only nodes get score=0.0, distance=1. Sort by (-score, distance).
 - StorageError and LLMError propagate unmodified — no catch blocks.
 """
 
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from depth_graph_search.core.domain.entities import ScoredNode
 from depth_graph_search.core.ports.async_ports import (
     AsyncEmbeddingProvider,
     AsyncGraphRepository,
@@ -20,7 +23,7 @@ from depth_graph_search.core.ports.async_ports import (
 )
 
 if TYPE_CHECKING:
-    from depth_graph_search.core.domain.entities import Metadata, Node
+    from depth_graph_search.core.domain.entities import Metadata
 
 
 class AsyncDefaultSearchPipeline(AsyncSearchPipeline):
@@ -56,7 +59,7 @@ class AsyncDefaultSearchPipeline(AsyncSearchPipeline):
         top_n: int = 5,
         depth_m: int = 2,
         metadata_filter: Metadata | None = None,
-    ) -> list[Node]:
+    ) -> list[ScoredNode]:
         """Execute a hybrid graph search for the given query.
 
         Algorithm:
@@ -73,7 +76,8 @@ class AsyncDefaultSearchPipeline(AsyncSearchPipeline):
             metadata_filter: Key-value dict to pre-filter candidate nodes.
 
         Returns:
-            At most ``top_n`` ``Node`` instances.
+            At most ``top_n`` ``ScoredNode`` instances ordered by score DESC,
+            distance ASC.
 
         Raises:
             StorageError: If the graph store operation fails.
@@ -82,7 +86,7 @@ class AsyncDefaultSearchPipeline(AsyncSearchPipeline):
         # Step 1: embed query
         embedding = await self._embedding_provider.embed(query)
 
-        # Step 2: hybrid search → entry nodes
+        # Step 2: hybrid search → entry nodes (ranked by relevance)
         entry_nodes = await self._graph_repository.search_hybrid(
             embedding, query, top_n, metadata_filter
         )
@@ -94,13 +98,19 @@ class AsyncDefaultSearchPipeline(AsyncSearchPipeline):
         # Step 4: BFS expand from entry nodes
         bfs_nodes = await self._graph_repository.traverse_bfs(entry_nodes, depth_m)
 
-        # Step 5: dedup — entry nodes first, then BFS-only
-        seen: dict[str, Node] = {}
-        for node in entry_nodes:
+        # Step 5a: dedup — entry nodes first (preserve rank order), then BFS-only
+        seen: dict[str, ScoredNode] = {}
+        for rank, node in enumerate(entry_nodes):
             if node.id not in seen:
-                seen[node.id] = node
+                score = 1.0 - rank / (top_n + 1)
+                seen[node.id] = ScoredNode(node=node, score=score, distance=0)
         for node in bfs_nodes:
             if node.id not in seen:
-                seen[node.id] = node
+                seen[node.id] = ScoredNode(node=node, score=0.0, distance=1)
 
-        return list(seen.values())[:top_n]
+        # Step 5b: sort by score DESC, distance ASC; return top_n
+        results = sorted(
+            seen.values(),
+            key=lambda sn: (-sn.score, sn.distance),
+        )
+        return results[:top_n]

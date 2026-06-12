@@ -25,8 +25,10 @@ if TYPE_CHECKING:
     from depth_graph_search.core.domain.entities import (
         Edge,
         Embedding,
+        IngestionResult,
         Metadata,
         Node,
+        ScoredNode,
     )
 
 
@@ -129,6 +131,15 @@ class AsyncGraphRepository(ABC):
 
         Raises:
             StorageError: If any DDL step fails.
+        """
+
+    @abstractmethod
+    async def health_check(self) -> bool:
+        """Probe database connectivity.
+
+        Returns:
+            ``True`` if the database is reachable and can execute a simple query,
+            ``False`` otherwise. Must NOT raise.
         """
 
     @abstractmethod
@@ -260,12 +271,16 @@ class AsyncIngestionPipeline(ABC):
     """
 
     @abstractmethod
-    async def ingest(self, text: str, metadata: Metadata | None = None) -> None:
+    async def ingest(self, text: str, metadata: Metadata | None = None) -> IngestionResult:
         """Ingest raw text into the knowledge graph.
 
         Args:
             text: The raw text to ingest.
             metadata: Free-form key-value context. ``None`` defaults to ``{}``.
+
+        Returns:
+            ``IngestionResult(node_count, edge_count)`` where ``node_count`` is the
+            number of new nodes saved and ``edge_count`` is the number of edges saved.
 
         Raises:
             ValidationError: If ``text`` is empty or whitespace-only.
@@ -292,7 +307,7 @@ class AsyncSearchPipeline(ABC):
         top_n: int = 5,
         depth_m: int = 2,
         metadata_filter: Metadata | None = None,
-    ) -> list[Node]:
+    ) -> list[ScoredNode]:
         """Execute a depth-first graph search for the given query.
 
         Args:
@@ -302,7 +317,8 @@ class AsyncSearchPipeline(ABC):
             metadata_filter: Key-value dict to pre-filter candidate nodes.
 
         Returns:
-            A list of at most ``top_n`` ``Node`` instances.
+            A list of at most ``top_n`` ``ScoredNode`` instances ordered by score DESC,
+            distance ASC.
 
         Raises:
             StorageError: If the graph store operation fails.

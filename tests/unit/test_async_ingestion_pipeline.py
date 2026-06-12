@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, call
 import pytest
 
 from depth_graph_search.adapters.ingestion.async_pipeline import AsyncDefaultIngestionPipeline
-from depth_graph_search.core.domain.entities import Edge, Embedding, Node
+from depth_graph_search.core.domain.entities import Edge, Embedding, IngestionResult, Node
 from depth_graph_search.core.domain.exceptions import ValidationError
 from depth_graph_search.core.ports.async_ports import AsyncIngestionPipeline
 
@@ -195,3 +195,29 @@ class TestIngestionPipeline:
         # extract_graph should be called with an empty dict as metadata
         call_args = llm.extract_graph.call_args
         assert call_args.args[1] == {} or call_args.kwargs.get("metadata") == {}
+
+    async def test_ingest_returns_ingestion_result(self) -> None:
+        """ingest() must return IngestionResult with correct node_count and edge_count."""
+        node1 = _make_node("node 1")
+        node2 = _make_node("node 2")
+        edge = _make_edge(node1.id, node2.id)
+        pipeline, llm, embedder, repo, _ = _make_pipeline(
+            extract_return=([node1, node2], [edge]),
+            embed_batch_return=[_make_embedding(), _make_embedding()],
+        )
+
+        result = await pipeline.ingest("text with nodes and edge")
+
+        assert isinstance(result, IngestionResult)
+        assert result.node_count == 2
+        assert result.edge_count == 1
+
+    async def test_ingest_returns_ingestion_result_zero_counts_on_empty_extraction(self) -> None:
+        """When LLM returns empty nodes, IngestionResult(0, 0) is returned."""
+        pipeline, *_ = _make_pipeline(extract_return=([], []))
+
+        result = await pipeline.ingest("some text")
+
+        assert isinstance(result, IngestionResult)
+        assert result.node_count == 0
+        assert result.edge_count == 0

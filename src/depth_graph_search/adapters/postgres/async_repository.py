@@ -114,6 +114,18 @@ LIMIT %(top_n)s
         except psycopg.Error as exc:
             raise StorageError("Failed to initialize schema") from exc
 
+    async def health_check(self) -> bool:
+        """Probe database connectivity with ``SELECT 1``.
+
+        Returns:
+            ``True`` if the query succeeds, ``False`` on any exception.
+        """
+        try:
+            await self._conn.execute("SELECT 1")
+            return True
+        except Exception:
+            return False
+
     async def close(self) -> None:
         """Close the underlying psycopg async connection if still open."""
         if self._conn and not self._conn.closed:

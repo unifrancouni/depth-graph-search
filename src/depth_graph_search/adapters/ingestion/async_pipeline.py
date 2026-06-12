@@ -16,6 +16,7 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
+from depth_graph_search.core.domain.entities import IngestionResult
 from depth_graph_search.core.ports.async_ports import (
     AsyncEmbeddingProvider,
     AsyncEntityResolutionStrategy,
@@ -62,7 +63,7 @@ class AsyncDefaultIngestionPipeline(AsyncIngestionPipeline):
         self._graph_repository = graph_repository
         self._entity_resolution = entity_resolution
 
-    async def ingest(self, text: str, metadata: Metadata | None = None) -> None:
+    async def ingest(self, text: str, metadata: Metadata | None = None) -> IngestionResult:
         """Ingest raw text into the knowledge graph.
 
         Five-step async algorithm:
@@ -75,6 +76,10 @@ class AsyncDefaultIngestionPipeline(AsyncIngestionPipeline):
         Args:
             text: The raw text to ingest. MUST be non-empty and non-whitespace-only.
             metadata: Free-form key-value context. ``None`` defaults to ``{}``.
+
+        Returns:
+            ``IngestionResult(node_count, edge_count)`` where ``node_count`` is the
+            number of nodes saved and ``edge_count`` is the number of edges saved.
 
         Raises:
             ValidationError: If ``text`` is empty or whitespace-only.
@@ -94,7 +99,7 @@ class AsyncDefaultIngestionPipeline(AsyncIngestionPipeline):
 
         # Fast-path: empty extraction
         if not nodes:
-            return
+            return IngestionResult(node_count=0, edge_count=0)
 
         # Step 2b: Guarantee metadata on every node (defensive)
         nodes = [
@@ -123,3 +128,5 @@ class AsyncDefaultIngestionPipeline(AsyncIngestionPipeline):
 
         for edge in edges:
             await self._graph_repository.save_edge(edge)
+
+        return IngestionResult(node_count=len(embedded_nodes), edge_count=len(edges))
