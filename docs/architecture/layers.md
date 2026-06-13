@@ -71,7 +71,7 @@ graph TD
 | **Delivery — API** | `api/` | `core/ports/`, `core/domain/` |
 | **Delivery — CLI** | `cli/` | `core/ports/`, `core/domain/` |
 
-> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02, SDD-07 async). `adapters/openai/` and `adapters/openrouter/` are fully implemented with both sync and async variants (SDD-03, SDD-07). `adapters/search/` is fully implemented (SDD-04, SDD-07 async). `adapters/ingestion/` is fully implemented (SDD-05, SDD-07 async). **SDK delivery surface** (`sdk/`) ships both `GraphSearch` (sync, SDD-06) and `AsyncGraphSearch` (async, SDD-07, SDD-08). **HTTP API delivery surface** (`api/`) ships `create_app()`, `POST /ingest`, `POST /search`, `GET /health`, pydantic-settings config (SDD-08). `cli/` is stubbed — deferred to a future SDD.
+> **v0.1 scope**: Directory structure, domain entities, and port contracts are fully implemented. `adapters/postgres/` is fully implemented (SDD-02, SDD-07 async). `adapters/openai/` and `adapters/openrouter/` are fully implemented with both sync and async variants (SDD-03, SDD-07). `adapters/search/` is fully implemented (SDD-04, SDD-07 async). `adapters/ingestion/` is fully implemented (SDD-05, SDD-07 async). **SDK delivery surface** (`sdk/`) ships both `GraphSearch` (sync, SDD-06) and `AsyncGraphSearch` (async, SDD-07, SDD-08). **HTTP API delivery surface** (`api/`) ships `create_app()`, `POST /ingest`, `POST /search`, `GET /health`, pydantic-settings config (SDD-08). **CLI delivery surface** (`cli/`) ships `dgs ingest`, `dgs search`, `dgs version` commands with Typer + Rich + pydantic-settings (SDD-09).
 
 ## Domain Entities
 
@@ -215,6 +215,41 @@ app = create_app()   # reads Settings from env / .env file
 - DTOs in `api/schemas.py` are independent of domain entities — `embedding` field is deliberately excluded
 - Dependency injection via `Depends(get_graph_search)` — routes never access `app.state` directly
 - Docker: `Dockerfile` (multi-stage, non-root) + `docker-compose.yml` `api` service depending on `postgres` healthcheck
+
+### CLI — Typer Commands (SDD-09)
+
+The CLI delivery surface wraps `GraphSearch` as a terminal tool. It is a thin Typer adapter — zero business logic, all delegation to the SDK.
+
+```bash
+# Install
+pip install "depth-graph-search[cli]"
+
+# Ingest
+dgs ingest --text "Marie Curie won the Nobel Prize in Physics in 1903." --metadata '{"source": "wiki"}'
+
+# Search
+dgs search --query "Nobel Prize winners" --top-n 5 --depth 2 --format json
+
+# Version
+dgs version
+```
+
+**Key modules**:
+
+| Module | Role |
+|--------|------|
+| `cli/config.py` | `CLISettings(BaseSettings)` — 8 env vars; validates DSN + conditional openrouter key; reads `.env` |
+| `cli/formatters.py` | `format_ingest_result(result, fmt)` and `format_search_results(results, fmt)` — json/table/plain |
+| `cli/main.py` | Typer app + `ingest`, `search`, `version` commands + `_build_client`, `_build_settings`, `_parse_json_flag` helpers |
+| `cli/__init__.py` | `from .main import app` — CLI entry point export |
+
+**Design principles**:
+- Entry point: `dgs = "depth_graph_search.cli.main:app"` via `[project.scripts]` in pyproject.toml
+- `CLISettings` is separate from `api/config.py` — same core env vars, but no `API_HOST`, `API_PORT`, `LOG_LEVEL`
+- CLI flags take precedence over env vars (pydantic-settings merging via `_build_settings(**overrides)` stripping `None`)
+- Per-command SDK construction with `with _build_client(settings) as gs:` context manager
+- Error handling: `ValidationError → exit 1`, `json.JSONDecodeError → exit 1`, runtime errors (`psycopg`, `LLMError`, `DepthGraphSearchError`) → exit 2; no tracebacks in stderr/stdout
+- Output formats: `table` (default), `json` (machine-readable), `plain` (human-readable no ANSI)
 
 ## See Also
 

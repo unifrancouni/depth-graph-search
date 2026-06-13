@@ -68,7 +68,7 @@ The dependency rule is enforced by convention in v0.1 (no import linter yet). An
 
 ## v0.1 Scope
 
-> **v0.1 scope**: Architecture, domain, all 6 sync ports + 6 async ports, all sync and async adapters, both SDK delivery surfaces (`GraphSearch` + `AsyncGraphSearch`), and the HTTP API delivery surface are fully implemented. The ingestion and search pipelines are production-ready in both sync and async variants. `cli/` is stubbed — deferred to a future SDD.
+> **v0.1 scope**: Architecture, domain, all 6 sync ports + 6 async ports, all sync and async adapters, both SDK delivery surfaces (`GraphSearch` + `AsyncGraphSearch`), the HTTP API delivery surface, and the CLI delivery surface are all fully implemented. The ingestion and search pipelines are production-ready in both sync and async variants.
 
 **Implemented in v0.1:**
 - 4 architecture docs (overview, layers, ports-and-adapters, strategies)
@@ -83,17 +83,18 @@ The dependency rule is enforced by convention in v0.1 (no import linter yet). An
 - Sync SDK delivery surface: `GraphSearch` facade wiring all 6 sync ports into `ingest()` / `search()` with `from_openai` / `from_openrouter` classmethods (SDD-06)
 - Async SDK delivery surface: `AsyncGraphSearch` facade wiring all 6 async ports into `await gs.ingest()` / `await gs.search()` with `async with await AsyncGraphSearch.from_openai(...)` (SDD-07); parity fixed — both return `IngestionResult` / `list[ScoredNode]` (SDD-08)
 - HTTP API delivery surface: FastAPI `create_app()` factory, `POST /ingest`, `POST /search`, `GET /health`, pydantic-settings `Settings`, Docker container (SDD-08)
+- CLI delivery surface: `dgs` Typer app with `ingest`, `search`, `version` commands; `CLISettings(BaseSettings)` for env-var config; `format_ingest_result` / `format_search_results` formatters for json/table/plain output; installable as `pip install "depth-graph-search[cli]"` (SDD-09)
 - Reusable test mock adapters: `InMemoryGraphRepository`, `FakeLLMProvider`, `FakeEmbeddingProvider`, `FakeEntityResolutionStrategy` in `tests/mocks/` (SDD-05)
-- 373 tests passing (362 unit + 11 integration API)
+- 454 tests passing (454 unit; 362 pre-existing + 92 CLI from SDD-09)
 
 **Explicitly excluded from v0.1:**
-- `cli/` delivery surface
 - Packaging / PyPI distribution
 - Performance benchmarks or SLAs
 - Authentication / authorization
 - Multi-tenancy
 - `asyncio.gather` optimizations in async pipelines (future SDD)
 - Connection pooling (future SDD)
+- CI packaging test for CLI (`pip install "depth-graph-search[cli]"` → `dgs --version` in clean venv — future SDD)
 
 ## Reading Guide
 

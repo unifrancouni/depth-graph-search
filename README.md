@@ -4,7 +4,7 @@
 
 Most RAG systems stop at similarity. Depth Graph Search goes further — it navigates relationships. Instead of treating documents as isolated chunks, it models data as a connected graph, unlocking contextual reasoning across linked entities, improved recall for complex queries, and more grounded LLM outputs.
 
-> **Status**: v0.1 — SDK (sync + async) and HTTP API are functional. CLI interface is planned.
+> **Status**: v0.1 — SDK (sync + async), HTTP API, and CLI are all functional.
 
 ---
 
@@ -53,6 +53,14 @@ To include HTTP API dependencies:
 pip install "depth-graph-search[api]"
 # or from source:
 pip install -e ".[api]"
+```
+
+To include CLI dependencies:
+
+```bash
+pip install "depth-graph-search[cli]"
+# or from source:
+pip install -e ".[cli]"
 ```
 
 **Requirements**: Python 3.11+
@@ -134,6 +142,46 @@ curl http://localhost:8000/health
 
 OpenAPI docs are available at `http://localhost:8000/docs`.
 
+### 6. CLI usage
+
+Install the CLI extra:
+
+```bash
+pip install "depth-graph-search[cli]"
+```
+
+Configure via environment variables (or a `.env` file) — the same vars as the HTTP API (minus `API_HOST`, `API_PORT`, `LOG_LEVEL`):
+
+```bash
+export DATABASE_URL="postgresql://depth:depth@localhost:5432/depth_graph"
+export OPENAI_API_KEY="sk-..."
+```
+
+Then run:
+
+```bash
+# Ingest text
+dgs ingest --text "Marie Curie won the Nobel Prize in Physics in 1903." --metadata '{"source": "wiki"}'
+# → Ingested: 2 nodes, 1 edges
+
+# Search
+dgs search --query "Nobel Prize winners" --top-n 5 --depth 2
+# → Rich table with ID / Content / Score / Distance columns
+
+# Output as JSON
+dgs search --query "Nobel Prize winners" --format json
+
+# Output as plain text
+dgs ingest --text "Fleming discovered penicillin." --format plain
+
+# Show version
+dgs version
+# → dgs 0.1.0
+
+# Override connection via flags (takes precedence over env vars)
+dgs ingest --text "..." --dsn "postgresql://other@host/db" --openai-key "sk-other"
+```
+
 ---
 
 ## Configuration Reference
@@ -168,6 +216,21 @@ When using the SDK directly, all configuration is passed explicitly — no env v
 |-----------|---------|-------------|
 | `text` | *required* | Free text to ingest |
 | `metadata` | `None` | Optional `dict` attached to every node created from this text |
+
+### CLI — environment variables
+
+When using the `dgs` CLI, configuration is read from environment variables (or a `.env` file). The CLI reads the same core env vars as the HTTP API, minus the server-specific ones (`API_HOST`, `API_PORT`, `LOG_LEVEL`). All env vars can also be overridden via CLI flags (`--dsn`, `--openai-key`, `--model`, `--embedding-model`, `--graph-name`, `--provider`).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | **Yes** | — | PostgreSQL DSN |
+| `OPENAI_API_KEY` | **Yes** | — | OpenAI API key (used for embeddings always) |
+| `OPENROUTER_API_KEY` | No | `None` | Required when `LLM_PROVIDER=openrouter` |
+| `LLM_PROVIDER` | No | `openai` | `openai` or `openrouter` |
+| `LLM_MODEL` | No | `gpt-4o` | Chat completion model |
+| `EMBEDDING_MODEL` | No | `text-embedding-3-large` | Embedding model |
+| `GRAPH_NAME` | No | `knowledge_graph` | Apache AGE graph name |
+| `EMBEDDING_DIMENSIONS` | No | `3072` | Vector dimensions |
 
 ### HTTP API — environment variables
 
@@ -247,7 +310,7 @@ graph LR
 |-----------|--------|-------------|
 | **SDK** | ✅ Available | `from depth_graph_search import GraphSearch, AsyncGraphSearch` |
 | **HTTP API** | ✅ Available | `POST /ingest`, `POST /search`, `GET /health` — FastAPI + uvicorn |
-| **CLI** | Planned | Terminal commands for quick ingestion and search |
+| **CLI** | ✅ Available | `dgs ingest`, `dgs search`, `dgs version` — Typer + Rich |
 
 All three share the same core — no logic duplication.
 

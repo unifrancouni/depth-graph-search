@@ -4,7 +4,7 @@
 
 ## Overview
 
-depth-graph-search has eleven functional requirements spanning ingestion, search, and delivery surfaces. FR-01 through FR-05 define the core pipeline behavior. FR-06 through FR-08 define the three delivery surfaces. FR-09 defines the operational baseline. FR-10 defines entity resolution during ingestion. FR-11 defines the async SDK.
+depth-graph-search has eleven functional requirements spanning ingestion, search, and delivery surfaces. FR-01 through FR-05 define the core pipeline behavior. FR-06 through FR-08 define the three delivery surfaces (all implemented). FR-09 defines the operational baseline. FR-10 defines entity resolution during ingestion. FR-11 defines the async SDK.
 
 ## Requirements Summary
 
@@ -17,7 +17,7 @@ depth-graph-search has eleven functional requirements spanning ingestion, search
 | FR-05 | Search Pipeline | Configurable strategy orchestrating FR-02–FR-04 | ✅ |
 | FR-06 | SDK Interface | Python importable library (sync) | ✅ |
 | FR-07 | HTTP API Interface | REST service — `POST /ingest`, `POST /search`, `GET /health` (SDD-08) | ✅ |
-| FR-08 | CLI Interface | Command-line tool for ingestion and search | 🔲 Planned |
+| FR-08 | CLI Interface | Command-line tool for ingestion and search | ✅ |
 | FR-09 | Docker Compose | Bundled PostgreSQL for local development | ✅ |
 | FR-10 | Entity Resolution | Deduplicate entities during ingestion against existing graph | ✅ |
 | FR-11 | Async SDK Interface | Async-native Python importable library for FastAPI/asyncio runtimes | ✅ |
@@ -181,13 +181,27 @@ Convenience classmethods handle real-world wiring (connection creation, `repo.in
 
 **Description**: Expose ingestion and search as a command-line tool.
 
-**Commands (minimum)**:
-- `dgs ingest --text "..." --metadata '{"key": "val"}'`
-- `dgs search --query "..." --top-n 5 --depth 2`
+**Commands**:
+- `dgs ingest --text "..." [--metadata '{"key": "val"}'] [--format json|table|plain]`
+- `dgs search --query "..." [--top-n 5] [--depth 2] [--metadata-filter '{}'] [--format json|table|plain]`
+- `dgs version`
 
-**Behavior**: CLI parses arguments, calls the core via SDK surface, prints structured output to stdout.
+**Behavior**: CLI parses arguments, resolves config from env vars / `.env` / flags (flags win), calls `GraphSearch` SDK via context manager, prints structured output to stdout. No business logic in the CLI layer — all delegation to the core.
 
-> **v0.1 scope**: Exact command name and flag names to be finalized during implementation.
+**Error handling**:
+- `ValidationError` (blank text/query) → exit 1, human-readable message
+- `json.JSONDecodeError` (invalid --metadata or --metadata-filter) → exit 1, names the flag
+- Runtime errors (`psycopg.OperationalError`, `LLMError`, `DepthGraphSearchError`) → exit 2
+- No tracebacks in stdout or stderr — always human-readable error messages
+
+**Output formats** (--format flag):
+- `table` (default) — Rich table for search; single-line `"Ingested: N nodes, M edges"` for ingest
+- `json` — machine-readable JSON
+- `plain` — human-readable, no ANSI codes
+
+**Delivery (SDD-09)**: Implemented in `src/depth_graph_search/cli/`. Installable as `pip install "depth-graph-search[cli]"`. Entry point: `dgs = "depth_graph_search.cli.main:app"` in `[project.scripts]`. Stack: Typer ≥ 0.12, Rich ≥ 13.0, pydantic-settings ≥ 2.0.
+
+> **v0.1 scope**: All three commands implemented. Connection config via env vars or CLI flags. 92 unit tests (18 config + 34 formatters + 40 commands). One inherently untestable scenario: CI packaging integration test (future SDD).
 
 ---
 

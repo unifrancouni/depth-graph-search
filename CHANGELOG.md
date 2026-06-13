@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (SDD-09 — CLI Interface)
+
+- **SDD-09 — CLI Interface**: `dgs` command-line tool wrapping `GraphSearch` SDK for terminal-based ingestion and search — Typer + Rich + pydantic-settings; 92 new CLI tests — all 454 unit tests passing
+- `src/depth_graph_search/cli/config.py` — `CLISettings(BaseSettings)`: 8 env vars (`DATABASE_URL`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `LLM_PROVIDER`, `LLM_MODEL`, `EMBEDDING_MODEL`, `GRAPH_NAME`, `EMBEDDING_DIMENSIONS`); `@field_validator` for PostgreSQL DSN; `@model_validator` for OPENROUTER_API_KEY conditional; reads from `.env` file; CLI-specific (no `api_host`, `api_port`, `log_level`)
+- `src/depth_graph_search/cli/formatters.py` — `format_ingest_result(result, fmt)` for json/table/plain (table: `"Ingested: N nodes, M edges"` single-line); `format_search_results(results, fmt)` for json/table/plain (table: Rich Table with ID/Content/Score/Distance columns)
+- `src/depth_graph_search/cli/main.py` — Typer app with 3 commands: `ingest` (--text required, --metadata JSON, connection flags, --format); `search` (--query required, --top-n default 5, --depth default 2, --metadata-filter JSON, connection flags, --format); `version` (prints `__version__`, exits 0); `_build_client(settings)` context-manager helper; `_build_settings(**overrides)` helper (strips None, lets pydantic-settings merge); `_parse_json_flag(value, flag_name)` helper
+- `src/depth_graph_search/cli/__init__.py` — `from .main import app` export
+- `tests/unit/cli/__init__.py` — empty package init
+- `tests/unit/cli/test_config.py` — 18 unit tests: CLISettings from env; missing DATABASE_URL/OPENAI_API_KEY raises; invalid DSN raises; validate_openrouter_key fires when provider=openrouter+no key; no api_host/port/log_level
+- `tests/unit/cli/test_formatters.py` — 34 unit tests: all 3 formats for ingest and search; JSON parseable; table has headers; plain has no ANSI codes; empty list graceful; invalid format raises ValueError
+- `tests/unit/cli/test_commands.py` — 40 integration tests via CliRunner: ingest/search happy paths; missing --text/--query exits 2; invalid --metadata JSON exits 1; env-only connection; flag beats env (--dsn overrides DATABASE_URL env); dgs --help lists all commands; error handling (missing DSN exits nonzero, LLMError exits 2, no Traceback in stderr/stdout)
+- **454 total unit tests passing** (362 pre-existing + 92 CLI; 0 failed, 0 skipped)
+
+### Changed (SDD-09)
+
+- `pyproject.toml` — added `[project.scripts] dgs = "depth_graph_search.cli.main:app"`; added `[project.optional-dependencies] cli = ["typer>=0.12", "rich>=13.0", "pydantic-settings>=2.0"]`
+
+---
+
 ### Added (SDD-08 — HTTP API + Environment Configuration)
 
 - **SDD-08 — HTTP API + Environment Configuration**: FastAPI HTTP service exposing `AsyncGraphSearch` over REST, environment-driven configuration via pydantic-settings, Docker API container, async parity fixes for search/ingest return types — 373 tests passing (362 unit + 11 integration API)
