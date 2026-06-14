@@ -41,13 +41,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             embedding_dimensions=settings.embedding_dimensions,
         )
     else:
-        # model_validator guarantees openrouter_api_key is not None
+        # validate_api_keys guarantees openrouter_api_key is not None
         # when llm_provider == "openrouter"
         assert settings.openrouter_api_key is not None
+        # Pass openai_api_key only when present — factory decides embedding source:
+        # non-empty → mixed mode (OpenAI embeddings); empty → OpenRouter-only mode
         gs = await AsyncGraphSearch.from_openrouter(
             dsn=settings.database_url,
             api_key=settings.openrouter_api_key,
-            openai_api_key=settings.openai_api_key,
+            openai_api_key=settings.openai_api_key or None,
             openrouter_model=settings.llm_model,
             embedding_model=settings.embedding_model,
             graph_name=settings.graph_name,

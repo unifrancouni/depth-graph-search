@@ -3,9 +3,11 @@
 Tests cover all spec scenarios:
   - All values from env → instance created
   - Missing DATABASE_URL → ValidationError with field name
-  - Missing OPENAI_API_KEY → ValidationError
+  - Missing OPENAI_API_KEY when LLM_PROVIDER=openai → ValidationError
+  - OpenRouter-only mode (no OPENAI_API_KEY, LLM_PROVIDER=openrouter) → valid
+  - Mixed mode (both keys) → valid
   - Invalid DSN scheme → ValidationError
-  - validate_openrouter_key fires when provider=openrouter but key is None
+  - validate_api_keys fires when provider=openrouter but openrouter_key is None
   - Valid openrouter config (key present) → instance created
   - CLISettings does NOT have API-specific fields (api_host, api_port, log_level)
 
@@ -26,8 +28,11 @@ from depth_graph_search.cli.config import CLISettings
 
 _REQUIRED = {
     "database_url": "postgresql://depth:depth@localhost:5432/depth_graph",
-    "openai_api_key": "sk-test-key",
+    "openai_api_key": "sk-test-key",  # default: openai provider requires key
 }
+
+# Fields that .env / real environment may supply — must be cleared for isolation tests.
+_ENV_FIELDS = ("DATABASE_URL", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "LLM_PROVIDER")
 
 
 def _make_settings(**overrides: object) -> CLISettings:
@@ -37,6 +42,26 @@ def _make_settings(**overrides: object) -> CLISettings:
     """
     data = {**_REQUIRED, **overrides}
     return CLISettings.model_validate(data)
+
+
+def _make_isolated_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    **kwargs: object,
+) -> CLISettings:
+    """Construct CLISettings with ONLY the explicitly provided fields.
+
+    Clears env vars and disables .env reading to isolate the test from
+    the developer's real .env file.
+    """
+    for field in _ENV_FIELDS:
+        monkeypatch.delenv(field, raising=False)
+
+    from pydantic_settings import SettingsConfigDict
+
+    class _IsolatedCLISettings(CLISettings):
+        model_config = SettingsConfigDict(env_file=None)
+
+    return _IsolatedCLISettings.model_validate(kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -97,17 +122,20 @@ class TestValidConfig:
 
 
 class TestMissingRequiredVars:
-    def test_missing_database_url_raises(self) -> None:
+    def test_missing_database_url_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Missing DATABASE_URL raises ValidationError identifying the field."""
         with pytest.raises(PydanticValidationError) as exc_info:
-            CLISettings.model_validate({"openai_api_key": "sk-key"})
+            _make_isolated_settings(monkeypatch, openai_api_key="sk-key")
         assert "database_url" in str(exc_info.value).lower()
 
-    def test_missing_openai_api_key_raises(self) -> None:
-        """Missing OPENAI_API_KEY raises ValidationError."""
+    def test_missing_openai_api_key_raises_when_llm_provider_openai(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing OPENAI_API_KEY raises ValidationError when LLM_PROVIDER=openai (default)."""
         with pytest.raises(PydanticValidationError) as exc_info:
-            CLISettings.model_validate(
-                {"database_url": "postgresql://depth:depth@localhost:5432/depth_graph"}
+            _make_isolated_settings(
+                monkeypatch,
+                database_url="postgresql://depth:depth@localhost:5432/depth_graph",
             )
         assert "openai_api_key" in str(exc_info.value).lower()
 
@@ -140,7 +168,7 @@ class TestDatabaseUrlValidation:
 
 
 # ---------------------------------------------------------------------------
-# Scenario: validate_openrouter_key validator
+# Scenario: validate_api_keys — openrouter key requirement
 # ---------------------------------------------------------------------------
 
 
@@ -163,3 +191,56 @@ class TestOpenrouterKeyConditional:
         settings = _make_settings()
         assert settings.llm_provider == "openai"
         assert settings.openrouter_api_key is None
+
+
+# ---------------------------------------------------------------------------
+# Scenario: OpenRouter-only mode (no OPENAI_API_KEY)
+# ---------------------------------------------------------------------------
+
+
+class TestOpenrouterOnlyMode:
+    def test_openrouter_only_mode_no_openai_key_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """LLM_PROVIDER=openrouter without OPENAI_API_KEY is valid (OpenRouter-only mode)."""
+        settings = _make_isolated_settings(
+            monkeypatch,
+            database_url="postgresql://depth:depth@localhost:5432/depth_graph",
+            llm_provider="openrouter",
+            openrouter_api_key="or-test-key",
+            # OPENAI_API_KEY intentionally absent — OpenRouter-only mode
+        )
+        assert settings.llm_provider == "openrouter"
+        assert settings.openai_api_key == ""
+
+    def test_openrouter_mixed_mode_both_keys_succeeds(self) -> None:
+        """LLM_PROVIDER=openrouter with both keys is valid (mixed mode)."""
+        settings = _make_settings(llm_provider="openrouter", openrouter_api_key="or-key")
+        assert settings.llm_provider == "openrouter"
+        assert settings.openai_api_key == "sk-test-key"
+        assert settings.openrouter_api_key == "or-key"
+
+    def test_openai_provider_requires_openai_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """LLM_PROVIDER=openai (default) without OPENAI_API_KEY raises ValidationError."""
+        with pytest.raises(PydanticValidationError) as exc_info:
+            _make_isolated_settings(
+                monkeypatch,
+                database_url="postgresql://depth:depth@localhost:5432/depth_graph",
+                llm_provider="openai",
+                # no openai_api_key
+            )
+        assert "openai_api_key" in str(exc_info.value).lower()
+
+    def test_openai_key_defaults_to_empty_string(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """openai_api_key defaults to empty string, not None."""
+        settings = _make_isolated_settings(
+            monkeypatch,
+            database_url="postgresql://depth:depth@localhost:5432/depth_graph",
+            llm_provider="openrouter",
+            openrouter_api_key="or-key",
+        )
+        assert settings.openai_api_key == ""

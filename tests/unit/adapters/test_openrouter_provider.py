@@ -1,7 +1,7 @@
 """Unit tests for OpenRouterProvider.
 
 All tests mock the openai.OpenAI client — no HTTP calls made.
-Covers: constructor, extract_graph (json_object mode), complete.
+Covers: constructor, embed, embed_batch, extract_graph (json_object mode), complete.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import openai
 import pytest
 
 from depth_graph_search.adapters.openrouter.provider import OpenRouterProvider
+from depth_graph_search.core.domain.entities import Embedding
 from depth_graph_search.core.domain.exceptions import LLMError
 from depth_graph_search.core.ports.embedding_provider import EmbeddingProvider
 from depth_graph_search.core.ports.llm_provider import LLMProvider
@@ -25,9 +26,23 @@ from depth_graph_search.core.ports.llm_provider import LLMProvider
 def _make_provider(
     api_key: str = "or-test",
     model: str = "openai/gpt-4o",
+    embedding_model: str = "openai/text-embedding-3-large",
 ) -> OpenRouterProvider:
     with patch("openai.OpenAI"):
-        return OpenRouterProvider(api_key=api_key, model=model)
+        return OpenRouterProvider(api_key=api_key, model=model, embedding_model=embedding_model)
+
+
+def _make_embedding_response(vectors: list[list[float]]) -> MagicMock:
+    """Build a mock openai embeddings response with multiple data items."""
+    data = []
+    for idx, vec in enumerate(vectors):
+        item = MagicMock()
+        item.embedding = vec
+        item.index = idx
+        data.append(item)
+    response = MagicMock()
+    response.data = data
+    return response
 
 
 def _make_create_response(content: str) -> MagicMock:
@@ -65,9 +80,9 @@ class TestConstructor:
         provider = _make_provider()
         assert isinstance(provider, LLMProvider)
 
-    def test_not_isinstance_embedding_provider(self) -> None:
+    def test_isinstance_embedding_provider(self) -> None:
         provider = _make_provider()
-        assert not isinstance(provider, EmbeddingProvider)
+        assert isinstance(provider, EmbeddingProvider)
 
     def test_no_http_on_construction(self) -> None:
         with patch("openai.OpenAI") as mock_openai_cls:
@@ -262,3 +277,122 @@ class TestComplete:
             model="openai/gpt-4o",
             messages=[{"role": "user", "content": "my prompt"}],
         )
+
+
+# ---------------------------------------------------------------------------
+# TestEmbed
+# ---------------------------------------------------------------------------
+
+
+class TestEmbed:
+    def test_embed_returns_embedding_instance(self) -> None:
+        """embed() returns an Embedding with correct shape."""
+        provider = _make_provider()
+        vector = [0.1, 0.2, 0.3]
+        provider._client.embeddings.create.return_value = _make_embedding_response([vector])
+
+        result = provider.embed("some text")
+
+        assert isinstance(result, Embedding)
+        assert result.vector == vector
+        assert result.dimensions == 3
+        assert result.model == "openai/text-embedding-3-large"
+
+    def test_embed_calls_create_with_correct_args(self) -> None:
+        """embed() passes model and input=[text] to the SDK."""
+        provider = _make_provider()
+        provider._client.embeddings.create.return_value = _make_embedding_response([[0.1]])
+
+        provider.embed("hello world")
+
+        provider._client.embeddings.create.assert_called_once_with(
+            model="openai/text-embedding-3-large",
+            input=["hello world"],
+        )
+
+    def test_embed_propagates_openai_error_as_llm_error(self) -> None:
+        """embed() wraps OpenAIError as LLMError."""
+        provider = _make_provider()
+        original = openai.RateLimitError(
+            message="rate limit",
+            response=MagicMock(),
+            body=None,
+        )
+        provider._client.embeddings.create.side_effect = original
+
+        with pytest.raises(LLMError) as exc_info:
+            provider.embed("text")
+
+        assert exc_info.value.__cause__ is original
+
+    def test_embed_uses_custom_embedding_model(self) -> None:
+        """embed() uses the embedding_model set at construction."""
+        provider = _make_provider(embedding_model="openai/text-embedding-ada-002")
+        provider._client.embeddings.create.return_value = _make_embedding_response([[0.5]])
+
+        result = provider.embed("text")
+
+        assert result.model == "openai/text-embedding-ada-002"
+        _, kwargs = provider._client.embeddings.create.call_args
+        assert kwargs["model"] == "openai/text-embedding-ada-002"
+
+
+# ---------------------------------------------------------------------------
+# TestEmbedBatch
+# ---------------------------------------------------------------------------
+
+
+class TestEmbedBatch:
+    def test_embed_batch_returns_list_of_embeddings(self) -> None:
+        """embed_batch() returns one Embedding per input text."""
+        provider = _make_provider()
+        vectors = [[0.1, 0.2], [0.3, 0.4]]
+        provider._client.embeddings.create.return_value = _make_embedding_response(vectors)
+
+        results = provider.embed_batch(["text A", "text B"])
+
+        assert len(results) == 2
+        assert all(isinstance(e, Embedding) for e in results)
+
+    def test_embed_batch_preserves_order(self) -> None:
+        """embed_batch() sorts by index — result order matches input order."""
+        provider = _make_provider()
+        # Simulate API returning items in reverse order
+        data = []
+        for idx, vec in enumerate([[0.9, 0.8], [0.1, 0.2]]):
+            item = MagicMock()
+            item.embedding = vec
+            item.index = idx
+            data.append(item)
+        # Shuffle: reverse so index=1 comes first
+        response = MagicMock()
+        response.data = [data[1], data[0]]
+        provider._client.embeddings.create.return_value = response
+
+        results = provider.embed_batch(["first", "second"])
+
+        assert results[0].vector == [0.9, 0.8]
+        assert results[1].vector == [0.1, 0.2]
+
+    def test_embed_batch_passes_all_texts_to_api(self) -> None:
+        """embed_batch() sends all texts as the input list."""
+        provider = _make_provider()
+        provider._client.embeddings.create.return_value = _make_embedding_response(
+            [[0.1], [0.2], [0.3]]
+        )
+
+        provider.embed_batch(["a", "b", "c"])
+
+        _, kwargs = provider._client.embeddings.create.call_args
+        assert kwargs["input"] == ["a", "b", "c"]
+
+    def test_embed_batch_propagates_openai_error_as_llm_error(self) -> None:
+        """embed_batch() wraps OpenAIError as LLMError."""
+        provider = _make_provider()
+        original = openai.APIConnectionError.__new__(openai.APIConnectionError)
+        provider._client.embeddings.create.side_effect = original
+
+        with pytest.raises(LLMError) as exc_info:
+            provider.embed_batch(["text"])
+
+        assert exc_info.value.__cause__ is original

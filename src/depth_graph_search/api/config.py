@@ -1,7 +1,7 @@
 """Settings — pydantic-settings BaseSettings for the FastAPI service.
 
 This is the ONLY place in the codebase that reads environment variables.
-All 11 configuration values are validated at import time. The application
+All configuration values are validated at import time. The application
 will refuse to start if any required var is missing or any value is invalid.
 
 Usage::
@@ -28,9 +28,12 @@ class Settings(BaseSettings):
     Required vars:
         DATABASE_URL: PostgreSQL DSN. Must start with ``postgresql://`` or
             ``postgresql+psycopg://``.
-        OPENAI_API_KEY: OpenAI API key for embeddings (and LLM when provider=openai).
 
     Optional vars (all have documented defaults):
+        OPENAI_API_KEY: OpenAI API key. Required when ``LLM_PROVIDER=openai``.
+            When ``LLM_PROVIDER=openrouter``, this is optional — if set, OpenAI
+            handles embeddings (mixed mode); if absent, OpenRouter handles both
+            LLM and embeddings (OpenRouter-only mode).
         OPENROUTER_API_KEY: Required only when ``LLM_PROVIDER=openrouter``.
         LLM_PROVIDER: Which LLM backend to use. One of ``openai``, ``openrouter``.
         LLM_MODEL: Chat completion model identifier.
@@ -49,12 +52,12 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
 
     database_url: str
-    openai_api_key: str
 
     # ------------------------------------------------------------------
     # Optional with defaults
     # ------------------------------------------------------------------
 
+    openai_api_key: str = ""
     openrouter_api_key: str | None = None
     llm_provider: Literal["openai", "openrouter"] = "openai"
     llm_model: str = "gpt-4o"
@@ -80,10 +83,21 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
-    def validate_openrouter_key(self) -> Self:
-        """Require OPENROUTER_API_KEY when LLM_PROVIDER=openrouter."""
+    def validate_api_keys(self) -> Self:
+        """Enforce provider-specific key requirements.
+
+        Rules:
+        - ``LLM_PROVIDER=openrouter`` requires ``OPENROUTER_API_KEY``.
+        - ``LLM_PROVIDER=openai`` requires ``OPENAI_API_KEY``.
+        - ``LLM_PROVIDER=openrouter`` without ``OPENAI_API_KEY`` is valid
+          (OpenRouter-only mode: single provider for both LLM and embeddings).
+        """
         if self.llm_provider == "openrouter" and not self.openrouter_api_key:
             raise ValueError(
                 "OPENROUTER_API_KEY required when LLM_PROVIDER=openrouter"
+            )
+        if self.llm_provider == "openai" and not self.openai_api_key:
+            raise ValueError(
+                "OPENAI_API_KEY required when LLM_PROVIDER=openai"
             )
         return self

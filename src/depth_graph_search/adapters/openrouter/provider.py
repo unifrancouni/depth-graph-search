@@ -1,7 +1,8 @@
-"""OpenRouterProvider — implements LLMProvider via the OpenAI SDK pointed at OpenRouter.
+"""OpenRouterProvider — implements LLMProvider + EmbeddingProvider via the OpenAI SDK at OpenRouter.
 
 Design decisions:
-- Implements LLMProvider only (no embedding — OpenRouter does not expose an embeddings API).
+- Implements LLMProvider AND EmbeddingProvider (OpenRouter exposes an embeddings API
+  compatible with the OpenAI SDK, routed via https://openrouter.ai/api/v1).
 - Extraction uses json_object mode + json.loads() + Pydantic model_validate() because
   OpenRouter does NOT support OpenAI Structured Outputs (.parse()).
 - Pydantic models are private to this module — NEVER exported, NEVER used in core/.
@@ -20,8 +21,9 @@ from typing import Any
 import openai
 from pydantic import BaseModel
 
-from depth_graph_search.core.domain.entities import Edge, Metadata, Node
+from depth_graph_search.core.domain.entities import Edge, Embedding, Metadata, Node
 from depth_graph_search.core.domain.exceptions import LLMError
+from depth_graph_search.core.ports.embedding_provider import EmbeddingProvider
 from depth_graph_search.core.ports.llm_provider import LLMProvider
 
 # ---------------------------------------------------------------------------
@@ -119,15 +121,16 @@ def _map_extraction(
 # ---------------------------------------------------------------------------
 
 
-class OpenRouterProvider(LLMProvider):
-    """Adapter implementing LLMProvider via the OpenAI SDK pointed at OpenRouter.
+class OpenRouterProvider(LLMProvider, EmbeddingProvider):
+    """Adapter implementing LLMProvider + EmbeddingProvider via the OpenAI SDK at OpenRouter.
 
-    Uses OpenRouter's OpenAI-compatible API endpoint. Does NOT implement
-    EmbeddingProvider — OpenRouter does not expose an embeddings API.
+    Uses OpenRouter's OpenAI-compatible API endpoint for both LLM extraction and
+    embedding generation.
 
     Args:
         api_key: OpenRouter API key.
         model: Model identifier in OpenRouter format. Defaults to "openai/gpt-4o".
+        embedding_model: Embedding model identifier. Defaults to "openai/text-embedding-3-large".
 
     Note:
         The constructor performs ZERO I/O. It stores config and creates the client object
@@ -138,17 +141,86 @@ class OpenRouterProvider(LLMProvider):
         self,
         api_key: str,
         model: str = "openai/gpt-4o",
+        embedding_model: str = "openai/text-embedding-3-large",
     ) -> None:
         self._client = openai.OpenAI(
             api_key=api_key,
             base_url="https://openrouter.ai/api/v1",
         )
         self._model = model
+        self._embedding_model = embedding_model
 
     @property
     def model(self) -> str:
         """Model identifier."""
         return self._model
+
+    @property
+    def embedding_model(self) -> str:
+        """Embedding model identifier."""
+        return self._embedding_model
+
+    # ------------------------------------------------------------------
+    # EmbeddingProvider
+    # ------------------------------------------------------------------
+
+    def embed(self, text: str) -> Embedding:
+        """Generate a single embedding for the given text.
+
+        Args:
+            text: The input text to embed.
+
+        Returns:
+            An Embedding with vector, model, and dimensions set.
+
+        Raises:
+            LLMError: On any OpenAI/OpenRouter API error.
+        """
+        try:
+            response = self._client.embeddings.create(
+                model=self._embedding_model,
+                input=[text],
+            )
+            data = response.data[0]
+            return Embedding(
+                vector=data.embedding,
+                model=self._embedding_model,
+                dimensions=len(data.embedding),
+            )
+        except openai.OpenAIError as exc:
+            raise LLMError("Embedding failed") from exc
+
+    def embed_batch(self, texts: list[str]) -> list[Embedding]:
+        """Generate embeddings for a batch of texts in a single API call.
+
+        Order is preserved: result[i] corresponds to texts[i].
+
+        Args:
+            texts: List of input texts to embed.
+
+        Returns:
+            List of Embedding instances in the same order as texts.
+
+        Raises:
+            LLMError: On any OpenAI/OpenRouter API error.
+        """
+        try:
+            response = self._client.embeddings.create(
+                model=self._embedding_model,
+                input=texts,
+            )
+            # API returns data ordered by index — sort to be safe
+            sorted_data = sorted(response.data, key=lambda d: d.index)
+            return [
+                Embedding(
+                    vector=d.embedding,
+                    model=self._embedding_model,
+                    dimensions=len(d.embedding),
+                )
+                for d in sorted_data
+            ]
+        except openai.OpenAIError as exc:
+            raise LLMError("Batch embedding failed") from exc
 
     # ------------------------------------------------------------------
     # LLMProvider

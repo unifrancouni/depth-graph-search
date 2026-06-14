@@ -1,10 +1,11 @@
-"""AsyncOpenRouterProvider — implements AsyncLLMProvider via OpenAI SDK at OpenRouter.
+"""AsyncOpenRouterProvider — implements AsyncLLMProvider + AsyncEmbeddingProvider via OpenAI SDK at OpenRouter.
 
 Uses ``openai.AsyncOpenAI`` with the OpenRouter base URL.
 Imports private helpers from the sync provider (same package).
 
 Design decisions:
-- Implements AsyncLLMProvider only (no embedding — OpenRouter has no embeddings API).
+- Implements AsyncLLMProvider AND AsyncEmbeddingProvider (OpenRouter exposes an
+  embeddings API compatible with the OpenAI SDK).
 - Uses json_object mode + json.loads() + Pydantic model_validate() because
   OpenRouter does NOT support OpenAI Structured Outputs.
 - Imports ``_ExtractionResult``, ``_map_extraction``, ``EXTRACTION_SYSTEM_PROMPT``
@@ -25,22 +26,24 @@ from depth_graph_search.adapters.openrouter.provider import (
     _ExtractionResult,
     _map_extraction,
 )
+from depth_graph_search.core.domain.entities import Embedding
 from depth_graph_search.core.domain.exceptions import LLMError
-from depth_graph_search.core.ports.async_ports import AsyncLLMProvider
+from depth_graph_search.core.ports.async_ports import AsyncEmbeddingProvider, AsyncLLMProvider
 
 if TYPE_CHECKING:
     from depth_graph_search.core.domain.entities import Edge, Metadata, Node
 
 
-class AsyncOpenRouterProvider(AsyncLLMProvider):
-    """Async adapter implementing AsyncLLMProvider via the OpenAI SDK at OpenRouter.
+class AsyncOpenRouterProvider(AsyncLLMProvider, AsyncEmbeddingProvider):
+    """Async adapter implementing AsyncLLMProvider + AsyncEmbeddingProvider via OpenAI SDK at OpenRouter.
 
-    Uses OpenRouter's OpenAI-compatible API endpoint. Does NOT implement
-    AsyncEmbeddingProvider — OpenRouter does not expose an embeddings API.
+    Uses OpenRouter's OpenAI-compatible API endpoint for both LLM extraction and
+    embedding generation.
 
     Args:
         api_key: OpenRouter API key. MUST be non-empty — raises ``ValueError`` if empty.
         model: Model identifier in OpenRouter format. Defaults to ``"openai/gpt-4o"``.
+        embedding_model: Embedding model identifier. Defaults to ``"openai/text-embedding-3-large"``.
 
     Note:
         The constructor performs ZERO I/O.
@@ -50,6 +53,7 @@ class AsyncOpenRouterProvider(AsyncLLMProvider):
         self,
         api_key: str,
         model: str = "openai/gpt-4o",
+        embedding_model: str = "openai/text-embedding-3-large",
     ) -> None:
         if not api_key:
             raise ValueError("api_key must not be empty")
@@ -58,11 +62,79 @@ class AsyncOpenRouterProvider(AsyncLLMProvider):
             base_url="https://openrouter.ai/api/v1",
         )
         self._model = model
+        self._embedding_model = embedding_model
 
     @property
     def model(self) -> str:
         """Model identifier."""
         return self._model
+
+    @property
+    def embedding_model(self) -> str:
+        """Embedding model identifier."""
+        return self._embedding_model
+
+    # ------------------------------------------------------------------
+    # AsyncEmbeddingProvider
+    # ------------------------------------------------------------------
+
+    async def embed(self, text: str) -> Embedding:
+        """Generate a single embedding for the given text.
+
+        Args:
+            text: The input text to embed.
+
+        Returns:
+            An ``Embedding`` with vector, model, and dimensions set.
+
+        Raises:
+            LLMError: On any OpenAI/OpenRouter API error.
+        """
+        try:
+            response = await self._client.embeddings.create(
+                model=self._embedding_model,
+                input=[text],
+            )
+            data = response.data[0]
+            return Embedding(
+                vector=data.embedding,
+                model=self._embedding_model,
+                dimensions=len(data.embedding),
+            )
+        except openai.OpenAIError as exc:
+            raise LLMError("Embedding failed") from exc
+
+    async def embed_batch(self, texts: list[str]) -> list[Embedding]:
+        """Generate embeddings for a batch of texts in a single API call.
+
+        Order is preserved: result[i] corresponds to texts[i].
+
+        Args:
+            texts: List of input texts to embed.
+
+        Returns:
+            List of ``Embedding`` instances in the same order as texts.
+
+        Raises:
+            LLMError: On any OpenAI/OpenRouter API error.
+        """
+        try:
+            response = await self._client.embeddings.create(
+                model=self._embedding_model,
+                input=texts,
+            )
+            # API returns data ordered by index — sort to be safe
+            sorted_data = sorted(response.data, key=lambda d: d.index)
+            return [
+                Embedding(
+                    vector=d.embedding,
+                    model=self._embedding_model,
+                    dimensions=len(d.embedding),
+                )
+                for d in sorted_data
+            ]
+        except openai.OpenAIError as exc:
+            raise LLMError("Batch embedding failed") from exc
 
     # ------------------------------------------------------------------
     # AsyncLLMProvider

@@ -200,23 +200,27 @@ class AsyncGraphSearch:
         dsn: str,
         api_key: str,
         *,
-        openai_api_key: str = "",
+        openai_api_key: str | None = None,
         openrouter_model: str = "openai/gpt-4o",
         embedding_model: str = "text-embedding-3-large",
         graph_name: str = "knowledge_graph",
         embedding_dimensions: int = 3072,
     ) -> "AsyncGraphSearch":
-        """Create an AsyncGraphSearch with OpenAI embeddings and OpenRouter LLM.
+        """Create an AsyncGraphSearch with OpenRouter LLM and optional OpenAI embeddings.
 
-        Uses ``AsyncOpenAIProvider`` for embedding generation and
-        ``AsyncOpenRouterProvider`` for LLM graph extraction.
+        When ``openai_api_key`` is provided, uses ``AsyncOpenAIProvider`` for embeddings
+        and ``AsyncOpenRouterProvider`` for LLM (mixed mode — backward compatible).
+
+        When ``openai_api_key`` is absent or ``None``, a single ``AsyncOpenRouterProvider``
+        instance serves as BOTH LLM and embedding provider (OpenRouter-only mode).
 
         Args:
             dsn: PostgreSQL connection string.
             api_key: OpenRouter API key.
-            openai_api_key: OpenAI API key (for embeddings). Required.
+            openai_api_key: OpenAI API key (for embeddings). Optional — when absent,
+                OpenRouter handles both LLM and embeddings.
             openrouter_model: OpenRouter model identifier.
-            embedding_model: OpenAI embedding model.
+            embedding_model: Embedding model identifier.
             graph_name: AGE graph name.
             embedding_dimensions: Vector dimension.
 
@@ -225,7 +229,6 @@ class AsyncGraphSearch:
         """
         import psycopg
 
-        from depth_graph_search.adapters.openai.async_provider import AsyncOpenAIProvider
         from depth_graph_search.adapters.openrouter.async_provider import (
             AsyncOpenRouterProvider,
         )
@@ -240,14 +243,32 @@ class AsyncGraphSearch:
             embedding_dimensions=embedding_dimensions,
         )
         await repo.initialize()
-        embedding_provider = AsyncOpenAIProvider(
-            api_key=openai_api_key,
-            embedding_model=embedding_model,
-        )
-        llm_provider = AsyncOpenRouterProvider(
-            api_key=api_key,
-            model=openrouter_model,
-        )
+
+        embedding_provider: AsyncEmbeddingProvider
+        llm_provider: AsyncLLMProvider
+
+        if openai_api_key:
+            # Mixed mode: OpenAI handles embeddings, OpenRouter handles LLM
+            from depth_graph_search.adapters.openai.async_provider import AsyncOpenAIProvider
+
+            embedding_provider = AsyncOpenAIProvider(
+                api_key=openai_api_key,
+                embedding_model=embedding_model,
+            )
+            llm_provider = AsyncOpenRouterProvider(
+                api_key=api_key,
+                model=openrouter_model,
+            )
+        else:
+            # OpenRouter-only mode: single provider for both roles
+            provider = AsyncOpenRouterProvider(
+                api_key=api_key,
+                model=openrouter_model,
+                embedding_model=embedding_model,
+            )
+            embedding_provider = provider
+            llm_provider = provider
+
         instance = cls(
             graph_repository=repo,
             embedding_provider=embedding_provider,

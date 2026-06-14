@@ -618,8 +618,8 @@ def test_from_openai_threads_graph_name() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_from_openrouter_construction_order() -> None:
-    """from_openrouter: OpenAIProvider for embeddings, OpenRouterProvider for LLM."""
+def test_from_openrouter_mixed_mode_construction_order() -> None:
+    """from_openrouter with openai_api_key: OpenAIProvider for embeddings, OpenRouterProvider for LLM."""
     with (
         patch("psycopg.connect") as mock_connect,
         patch(
@@ -646,8 +646,8 @@ def test_from_openrouter_construction_order() -> None:
 
         gs = GraphSearch.from_openrouter(
             "postgresql://localhost/test",
-            openai_api_key="sk-openai",
             openrouter_api_key="sk-openrouter",
+            openai_api_key="sk-openai",
         )
 
         # Connection created
@@ -662,7 +662,7 @@ def test_from_openrouter_construction_order() -> None:
             embedding_model="text-embedding-3-large",
         )
 
-        # OpenRouterProvider for LLM
+        # OpenRouterProvider for LLM (without embedding_model in mixed mode)
         MockOR.assert_called_once_with(
             api_key="sk-openrouter",
             model="openai/gpt-4o",
@@ -672,8 +672,8 @@ def test_from_openrouter_construction_order() -> None:
         assert gs._connection is mock_conn
 
 
-def test_from_openrouter_split_providers() -> None:
-    """from_openrouter uses separate providers: OAI for embed, OR for llm."""
+def test_from_openrouter_mixed_mode_split_providers() -> None:
+    """from_openrouter with openai_api_key uses separate providers: OAI for embed, OR for llm."""
     with (
         patch("psycopg.connect") as mock_connect,
         patch(
@@ -696,8 +696,8 @@ def test_from_openrouter_split_providers() -> None:
 
         gs = GraphSearch.from_openrouter(
             "postgresql://localhost/test",
-            openai_api_key="sk-openai",
             openrouter_api_key="sk-openrouter",
+            openai_api_key="sk-openai",
         )
 
         # Search pipeline uses OAI for embeddings
@@ -708,6 +708,68 @@ def test_from_openrouter_split_providers() -> None:
         ingestion_pipeline: DefaultIngestionPipeline = gs._ingestion_pipeline
         assert ingestion_pipeline._embedding_provider is mock_oai_instance
         assert ingestion_pipeline._llm_provider is mock_or_instance
+
+
+def test_from_openrouter_openrouter_only_mode() -> None:
+    """from_openrouter without openai_api_key wires single OpenRouterProvider for both roles."""
+    with (
+        patch("psycopg.connect") as mock_connect,
+        patch(
+            "depth_graph_search.adapters.postgres.repository.PostgresGraphRepository"
+        ) as MockRepo,
+        patch(
+            "depth_graph_search.adapters.openrouter.provider.OpenRouterProvider"
+        ) as MockOR,
+    ):
+        mock_connect.return_value = MagicMock()
+        mock_repo_instance = MagicMock()
+        MockRepo.return_value = mock_repo_instance
+        mock_or_instance = MagicMock()
+        MockOR.return_value = mock_or_instance
+
+        gs = GraphSearch.from_openrouter(
+            "postgresql://localhost/test",
+            openrouter_api_key="sk-openrouter",
+            # no openai_api_key
+        )
+
+        # Only one OpenRouterProvider created
+        assert MockOR.call_count == 1
+
+        # Both pipelines use the SAME provider instance
+        search_pipeline: DefaultSearchPipeline = gs._search_pipeline
+        ingestion_pipeline: DefaultIngestionPipeline = gs._ingestion_pipeline
+        assert search_pipeline._embedding_provider is mock_or_instance
+        assert ingestion_pipeline._embedding_provider is mock_or_instance
+        assert ingestion_pipeline._llm_provider is mock_or_instance
+
+
+def test_from_openrouter_openrouter_only_passes_embedding_model() -> None:
+    """from_openrouter without openai_api_key passes embedding_model to OpenRouterProvider."""
+    with (
+        patch("psycopg.connect") as mock_connect,
+        patch(
+            "depth_graph_search.adapters.postgres.repository.PostgresGraphRepository"
+        ) as MockRepo,
+        patch(
+            "depth_graph_search.adapters.openrouter.provider.OpenRouterProvider"
+        ) as MockOR,
+    ):
+        mock_connect.return_value = MagicMock()
+        MockRepo.return_value = MagicMock()
+        MockOR.return_value = MagicMock()
+
+        GraphSearch.from_openrouter(
+            "postgresql://localhost/test",
+            openrouter_api_key="sk-openrouter",
+            embedding_model="openai/text-embedding-ada-002",
+        )
+
+        MockOR.assert_called_once_with(
+            api_key="sk-openrouter",
+            model="openai/gpt-4o",
+            embedding_model="openai/text-embedding-ada-002",
+        )
 
 
 # ---------------------------------------------------------------------------

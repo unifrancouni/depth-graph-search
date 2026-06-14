@@ -352,7 +352,8 @@ class TestFromOpenai:
 
 
 class TestFromOpenrouter:
-    async def test_from_openrouter_awaits_repo_initialize(self) -> None:
+    async def test_from_openrouter_mixed_mode_awaits_repo_initialize(self) -> None:
+        """from_openrouter with openai_api_key awaits repo.initialize()."""
         mock_conn = AsyncMock()
         mock_repo = AsyncMock()
 
@@ -376,3 +377,101 @@ class TestFromOpenrouter:
 
         mock_repo.initialize.assert_awaited_once()
         assert isinstance(gs, AsyncGraphSearch)
+
+    async def test_from_openrouter_openrouter_only_mode(self) -> None:
+        """from_openrouter without openai_api_key uses single AsyncOpenRouterProvider for both roles."""
+        mock_conn = AsyncMock()
+        mock_repo = AsyncMock()
+        mock_or_instance = MagicMock()
+
+        with patch("psycopg.AsyncConnection.connect", new_callable=AsyncMock) as mock_conn_fn:
+            mock_conn_fn.return_value = mock_conn
+            with patch(
+                "depth_graph_search.adapters.postgres.async_repository.AsyncPostgresGraphRepository"
+            ) as MockRepo:
+                MockRepo.return_value = mock_repo
+                with patch(
+                    "depth_graph_search.adapters.openrouter.async_provider.AsyncOpenRouterProvider"
+                ) as MockOR:
+                    MockOR.return_value = mock_or_instance
+                    gs = await AsyncGraphSearch.from_openrouter(
+                        "postgresql://localhost/test",
+                        "or-key",
+                        # no openai_api_key
+                    )
+
+        # Only one provider created
+        assert MockOR.call_count == 1
+        # Both pipelines use the same instance
+        from depth_graph_search.adapters.ingestion.async_pipeline import AsyncDefaultIngestionPipeline
+        from depth_graph_search.adapters.search.async_pipeline import AsyncDefaultSearchPipeline
+
+        assert isinstance(gs._search_pipeline, AsyncDefaultSearchPipeline)
+        assert isinstance(gs._ingestion_pipeline, AsyncDefaultIngestionPipeline)
+        assert gs._search_pipeline._embedding_provider is mock_or_instance
+        assert gs._ingestion_pipeline._embedding_provider is mock_or_instance
+        assert gs._ingestion_pipeline._llm_provider is mock_or_instance
+
+    async def test_from_openrouter_mixed_mode_split_providers(self) -> None:
+        """from_openrouter with openai_api_key wires AsyncOpenAIProvider for embeddings."""
+        mock_conn = AsyncMock()
+        mock_repo = AsyncMock()
+        mock_oai_instance = MagicMock()
+        mock_or_instance = MagicMock()
+
+        with patch("psycopg.AsyncConnection.connect", new_callable=AsyncMock) as mock_conn_fn:
+            mock_conn_fn.return_value = mock_conn
+            with patch(
+                "depth_graph_search.adapters.postgres.async_repository.AsyncPostgresGraphRepository"
+            ) as MockRepo:
+                MockRepo.return_value = mock_repo
+                with patch(
+                    "depth_graph_search.adapters.openai.async_provider.AsyncOpenAIProvider"
+                ) as MockOAI:
+                    MockOAI.return_value = mock_oai_instance
+                    with patch(
+                        "depth_graph_search.adapters.openrouter.async_provider.AsyncOpenRouterProvider"
+                    ) as MockOR:
+                        MockOR.return_value = mock_or_instance
+                        gs = await AsyncGraphSearch.from_openrouter(
+                            "postgresql://localhost/test",
+                            "or-key",
+                            openai_api_key="sk-openai",
+                        )
+
+        from depth_graph_search.adapters.ingestion.async_pipeline import AsyncDefaultIngestionPipeline
+        from depth_graph_search.adapters.search.async_pipeline import AsyncDefaultSearchPipeline
+
+        assert isinstance(gs._search_pipeline, AsyncDefaultSearchPipeline)
+        assert isinstance(gs._ingestion_pipeline, AsyncDefaultIngestionPipeline)
+        # Embedding goes to OAI, LLM goes to OR
+        assert gs._search_pipeline._embedding_provider is mock_oai_instance
+        assert gs._ingestion_pipeline._embedding_provider is mock_oai_instance
+        assert gs._ingestion_pipeline._llm_provider is mock_or_instance
+
+    async def test_from_openrouter_openrouter_only_passes_embedding_model(self) -> None:
+        """from_openrouter without openai_api_key passes embedding_model to AsyncOpenRouterProvider."""
+        mock_conn = AsyncMock()
+        mock_repo = AsyncMock()
+
+        with patch("psycopg.AsyncConnection.connect", new_callable=AsyncMock) as mock_conn_fn:
+            mock_conn_fn.return_value = mock_conn
+            with patch(
+                "depth_graph_search.adapters.postgres.async_repository.AsyncPostgresGraphRepository"
+            ) as MockRepo:
+                MockRepo.return_value = mock_repo
+                with patch(
+                    "depth_graph_search.adapters.openrouter.async_provider.AsyncOpenRouterProvider"
+                ) as MockOR:
+                    MockOR.return_value = MagicMock()
+                    await AsyncGraphSearch.from_openrouter(
+                        "postgresql://localhost/test",
+                        "or-key",
+                        embedding_model="openai/text-embedding-ada-002",
+                    )
+
+        MockOR.assert_called_once_with(
+            api_key="or-key",
+            model="openai/gpt-4o",
+            embedding_model="openai/text-embedding-ada-002",
+        )

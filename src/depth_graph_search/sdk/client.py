@@ -159,25 +159,29 @@ class GraphSearch:
     def from_openrouter(
         cls,
         dsn: str,
-        openai_api_key: str,
         openrouter_api_key: str,
         *,
+        openai_api_key: str | None = None,
         openrouter_model: str = "openai/gpt-4o",
         embedding_model: str = "text-embedding-3-large",
         graph_name: str = "knowledge_graph",
         embedding_dimensions: int = 3072,
     ) -> "GraphSearch":
-        """Create a GraphSearch with OpenAI embeddings and OpenRouter LLM.
+        """Create a GraphSearch with OpenRouter LLM and optional OpenAI embeddings.
 
-        Uses ``OpenAIProvider`` for embedding generation and ``OpenRouterProvider``
-        for LLM graph extraction. Same connection lifecycle as ``from_openai``.
+        When ``openai_api_key`` is provided, uses ``OpenAIProvider`` for embeddings and
+        ``OpenRouterProvider`` for LLM (mixed mode — backward compatible).
+
+        When ``openai_api_key`` is absent or ``None``, a single ``OpenRouterProvider``
+        instance serves as BOTH LLM and embedding provider (OpenRouter-only mode).
 
         Args:
             dsn: PostgreSQL connection string.
-            openai_api_key: OpenAI API key (for embeddings).
             openrouter_api_key: OpenRouter API key (for LLM extraction).
+            openai_api_key: OpenAI API key (for embeddings). Optional — when absent,
+                OpenRouter handles both LLM and embeddings.
             openrouter_model: OpenRouter model identifier. Defaults to ``"openai/gpt-4o"``.
-            embedding_model: OpenAI embedding model. Defaults to ``"text-embedding-3-large"``.
+            embedding_model: Embedding model identifier. Defaults to ``"text-embedding-3-large"``.
             graph_name: AGE graph name. Defaults to ``"knowledge_graph"``.
             embedding_dimensions: Vector dimension. Defaults to 3072.
 
@@ -186,7 +190,6 @@ class GraphSearch:
         """
         import psycopg
 
-        from depth_graph_search.adapters.openai.provider import OpenAIProvider
         from depth_graph_search.adapters.openrouter.provider import OpenRouterProvider
         from depth_graph_search.adapters.postgres.repository import (
             PostgresGraphRepository,
@@ -199,14 +202,32 @@ class GraphSearch:
             embedding_dimensions=embedding_dimensions,
         )
         repo.initialize()
-        embedding_provider = OpenAIProvider(
-            api_key=openai_api_key,
-            embedding_model=embedding_model,
-        )
-        llm_provider = OpenRouterProvider(
-            api_key=openrouter_api_key,
-            model=openrouter_model,
-        )
+
+        embedding_provider: EmbeddingProvider
+        llm_provider: LLMProvider
+
+        if openai_api_key:
+            # Mixed mode: OpenAI handles embeddings, OpenRouter handles LLM
+            from depth_graph_search.adapters.openai.provider import OpenAIProvider
+
+            embedding_provider = OpenAIProvider(
+                api_key=openai_api_key,
+                embedding_model=embedding_model,
+            )
+            llm_provider = OpenRouterProvider(
+                api_key=openrouter_api_key,
+                model=openrouter_model,
+            )
+        else:
+            # OpenRouter-only mode: single provider for both roles
+            provider = OpenRouterProvider(
+                api_key=openrouter_api_key,
+                model=openrouter_model,
+                embedding_model=embedding_model,
+            )
+            embedding_provider = provider
+            llm_provider = provider
+
         instance = cls(
             graph_repository=repo,
             embedding_provider=embedding_provider,

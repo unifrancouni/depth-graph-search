@@ -42,12 +42,16 @@ def _build_client(settings: CLISettings) -> dgs.GraphSearch:
     Dispatches to ``from_openai`` or ``from_openrouter`` based on
     ``settings.llm_provider``.  The returned instance is NOT a context manager
     here — callers are responsible for calling ``close()`` or using ``with``.
+
+    For OpenRouter, passes ``openai_api_key`` only when non-empty — the factory
+    decides the embedding source: non-empty → mixed mode (OpenAI embeddings);
+    absent → OpenRouter-only mode (single provider for both LLM and embeddings).
     """
     if settings.llm_provider == "openrouter":
         return dgs.GraphSearch.from_openrouter(
             dsn=settings.database_url,
-            openai_api_key=settings.openai_api_key,
             openrouter_api_key=settings.openrouter_api_key or "",
+            openai_api_key=settings.openai_api_key or None,
             openrouter_model=settings.llm_model,
             embedding_model=settings.embedding_model,
             graph_name=settings.graph_name,
