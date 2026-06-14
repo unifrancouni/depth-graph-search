@@ -72,7 +72,7 @@ The dependency rule is enforced by convention in v0.1 (no import linter yet). An
 
 **Implemented in v0.1:**
 - 4 architecture docs (overview, layers, ports-and-adapters, strategies)
-- 1 decision record (ADR-001: PostgreSQL + AGE)
+- 10 decision records (ADR-001 through ADR-010)
 - 2 requirements docs (functional FR-01–FR-11, non-functional)
 - 2 flow docs (ingestion, search)
 - Domain layer: `Node`, `Edge`, `Embedding`, `Metadata`, `ScoredNode`, `ResolvedNode`, `IngestionResult` (SDD-01, SDD-05)
@@ -105,7 +105,16 @@ Read the docs in this order for progressive disclosure:
 3. [Ports & Adapters](./ports-and-adapters.md) — every interface contract
 4. [Strategies](./strategies.md) — the four-level Strategy Pattern
 5. [ADR-001](./decisions/ADR-001-postgresql-age.md) — why PostgreSQL + AGE
-6. [Functional Requirements](../requirements/functional.md) — FR-01 through FR-09
+6. [ADR-002](./decisions/ADR-002-clean-architecture.md) — frozen dataclasses + ABC ports
+7. [ADR-003](./decisions/ADR-003-dual-llm-providers.md) — dual LLM provider strategy
+8. [ADR-004](./decisions/ADR-004-hybrid-search-pipeline.md) — hybrid search pipeline
+9. [ADR-005](./decisions/ADR-005-ingestion-pipeline.md) — ingestion pipeline
+10. [ADR-006](./decisions/ADR-006-sdk-facade.md) — SDK facade
+11. [ADR-007](./decisions/ADR-007-async-architecture.md) — mirrored sync/async
+12. [ADR-008](./decisions/ADR-008-http-api.md) — HTTP API with FastAPI
+13. [ADR-009](./decisions/ADR-009-cli-interface.md) — CLI with Typer
+14. [ADR-010](./decisions/ADR-010-openrouter-embeddings.md) — optional OpenAI via OpenRouter embeddings
+15. [Functional Requirements](../requirements/functional.md) — FR-01 through FR-09
 7. [Non-Functional Requirements](../requirements/non-functional.md) — quality constraints
 8. [Ingestion Flow](../flows/ingestion.md) — runtime: text → graph
 9. [Search Flow](../flows/search.md) — runtime: query → results
@@ -116,3 +125,12 @@ Read the docs in this order for progressive disclosure:
 - [Ports & Adapters](./ports-and-adapters.md) — interface contracts
 - [Strategies](./strategies.md) — Strategy Pattern at four levels
 - [ADR-001: PostgreSQL + AGE](./decisions/ADR-001-postgresql-age.md) — technology decision record
+- [ADR-002: Clean Architecture](./decisions/ADR-002-clean-architecture.md) — frozen dataclasses + ABC ports
+- [ADR-003: Dual LLM Providers](./decisions/ADR-003-dual-llm-providers.md) — OpenAI + OpenRouter strategy
+- [ADR-004: Hybrid Search Pipeline](./decisions/ADR-004-hybrid-search-pipeline.md) — BM25 + vector + BFS
+- [ADR-005: Ingestion Pipeline](./decisions/ADR-005-ingestion-pipeline.md) — LLM extraction + entity resolution
+- [ADR-006: SDK Facade](./decisions/ADR-006-sdk-facade.md) — port injection + factory classmethods
+- [ADR-007: Mirrored Sync/Async](./decisions/ADR-007-async-architecture.md) — full async mirror architecture
+- [ADR-008: HTTP API](./decisions/ADR-008-http-api.md) — FastAPI + pydantic-settings + lifespan
+- [ADR-009: CLI Interface](./decisions/ADR-009-cli-interface.md) — Typer + Rich thin adapter
+- [ADR-010: OpenRouter Embeddings](./decisions/ADR-010-openrouter-embeddings.md) — optional OpenAI via OpenRouter
