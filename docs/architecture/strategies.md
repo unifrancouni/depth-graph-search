@@ -67,12 +67,12 @@ graph TD
 
 **What it does**: Extract structured graph elements (nodes + edges) from raw text during ingestion, and generate embeddings for nodes.
 
-**v0.1 default**: Two providers — OpenAI for embeddings and primary extraction, OpenRouter as an alternative LLM for extraction.
+**v0.1 default**: Two providers — both capable of embeddings and LLM extraction. Three runtime configurations are supported: OpenAI-only, OpenRouter-only (no OpenAI key needed), and Mixed (OpenAI for embeddings + OpenRouter for LLM).
 
 | Provider | Port | Primary Use |
 |----------|------|-------------|
 | `OpenAIProvider` | `LLMProvider` + `EmbeddingProvider` | Entity/edge extraction + embeddings |
-| `OpenRouterProvider` | `LLMProvider` | Entity/edge extraction (alternative) |
+| `OpenRouterProvider` | `LLMProvider` + `EmbeddingProvider` | Entity/edge extraction + embeddings (via OpenRouter API) |
 
 | Property | Value |
 |----------|-------|

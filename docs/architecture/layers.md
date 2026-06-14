@@ -99,7 +99,7 @@ Adapters are the only layer that talks to the outside world. Each adapter implem
 |---------|-------------------|------------|--------|
 | `PostgresGraphRepository` | `GraphRepository` | PostgreSQL 17 + Apache AGE 1.6 + pgvector | ✅ Implemented (SDD-02) |
 | `OpenAIProvider` | `EmbeddingProvider`, `LLMProvider` | OpenAI API | ✅ Implemented (SDD-03) |
-| `OpenRouterProvider` | `LLMProvider` | OpenRouter API | ✅ Implemented (SDD-03) |
+| `OpenRouterProvider` | `EmbeddingProvider`, `LLMProvider` | OpenRouter API | ✅ Implemented (SDD-03, embeddings added) |
 | `DefaultSearchPipeline` | `SearchPipeline` | Pure Python Orchestrator | ✅ Implemented (SDD-04) |
 | `DefaultEntityResolutionStrategy` | `EntityResolutionStrategy` | Pure Python Orchestrator | ✅ Implemented (SDD-04) |
 | `DefaultIngestionPipeline` | `IngestionPipeline` | Pure Python Orchestrator | ✅ Implemented (SDD-05) |
@@ -110,7 +110,7 @@ Adapters are the only layer that talks to the outside world. Each adapter implem
 |---------|-------------------|------------|--------|
 | `AsyncPostgresGraphRepository` | `AsyncGraphRepository` | psycopg.AsyncConnection + pgvector async | ✅ Implemented (SDD-07) |
 | `AsyncOpenAIProvider` | `AsyncEmbeddingProvider`, `AsyncLLMProvider` | openai.AsyncOpenAI | ✅ Implemented (SDD-07) |
-| `AsyncOpenRouterProvider` | `AsyncLLMProvider` | openai.AsyncOpenAI + OpenRouter base_url | ✅ Implemented (SDD-07) |
+| `AsyncOpenRouterProvider` | `AsyncEmbeddingProvider`, `AsyncLLMProvider` | openai.AsyncOpenAI + OpenRouter base_url | ✅ Implemented (SDD-07, embeddings added) |
 | `AsyncDefaultSearchPipeline` | `AsyncSearchPipeline` | Pure Python Async Orchestrator | ✅ Implemented (SDD-07) |
 | `AsyncDefaultEntityResolutionStrategy` | `AsyncEntityResolutionStrategy` | Pure Python Async Orchestrator | ✅ Implemented (SDD-07) |
 | `AsyncDefaultIngestionPipeline` | `AsyncIngestionPipeline` | Pure Python Async Orchestrator | ✅ Implemented (SDD-07) |
@@ -119,7 +119,7 @@ Adapters are the only layer that talks to the outside world. Each adapter implem
 
 **`OpenAIProvider`** lives in `src/depth_graph_search/adapters/openai/`. Single class implementing both `EmbeddingProvider` and `LLMProvider`. Uses the `openai` SDK with Structured Outputs (`.parse()`) for entity extraction. Dependencies: `openai>=1.0`, `pydantic>=2.0`.
 
-**`OpenRouterProvider`** lives in `src/depth_graph_search/adapters/openrouter/`. Implements `LLMProvider` only (no embeddings). Uses the `openai` SDK with `base_url="https://openrouter.ai/api/v1"` and `json_object` response format for extraction.
+**`OpenRouterProvider`** lives in `src/depth_graph_search/adapters/openrouter/`. Implements both `LLMProvider` and `EmbeddingProvider`. Uses the `openai` SDK with `base_url="https://openrouter.ai/api/v1"` and `json_object` response format for extraction. Embedding methods (`embed`, `embed_batch`) use the same OpenAI-compatible API at the OpenRouter endpoint.
 
 **`DefaultSearchPipeline`** lives in `src/depth_graph_search/adapters/search/`. Implements `SearchPipeline`. Pure Python orchestrator — no external dependencies. Five-step algorithm: embed query → hybrid search → BFS expand → dedup by node ID → score and sort. Rank-score formula: `1.0 - rank / (top_n + 1)`. BFS-only nodes score `0.0`. Errors from injected ports propagate unmodified.
 
@@ -157,7 +157,7 @@ with GraphSearch.from_openai("postgresql://...", "sk-...") as gs:
     nodes = gs.search("who works at Acme?", top_n=5, depth_m=2)
 ```
 
-**Classmethods**: `from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)` and `from_openrouter(dsn, openai_api_key, openrouter_api_key, *, ...)` handle connection creation, `repo.initialize()`, and provider wiring. The facade owns the connection lifecycle.
+**Classmethods**: `from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)` and `from_openrouter(dsn, openrouter_api_key, *, openai_api_key=None, ...)` handle connection creation, `repo.initialize()`, and provider wiring. When `openai_api_key` is provided to `from_openrouter`, OpenAI handles embeddings (mixed mode). When absent, OpenRouter handles both LLM and embeddings (OpenRouter-only mode). The facade owns the connection lifecycle.
 
 **Internal wiring**:
 1. `_search_pipeline = DefaultSearchPipeline(graph_repository, embedding_provider)`

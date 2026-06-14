@@ -74,7 +74,7 @@ Orchestrates the full ingestion flow. This is a strategy port — the pipeline i
 |---------|------------|------------|---------|--------|
 | `PostgresGraphRepository` | `GraphRepository` | PostgreSQL 17 + AGE 1.6 + pgvector | `adapters/postgres/` | ✅ Implemented (SDD-02) |
 | `OpenAIProvider` | `EmbeddingProvider`, `LLMProvider` | OpenAI API | `adapters/openai/` | ✅ Implemented (SDD-03) |
-| `OpenRouterProvider` | `LLMProvider` | OpenRouter API | `adapters/openrouter/` | ✅ Implemented (SDD-03) |
+| `OpenRouterProvider` | `EmbeddingProvider`, `LLMProvider` | OpenRouter API | `adapters/openrouter/` | ✅ Implemented (SDD-03, embeddings added) |
 | `DefaultSearchPipeline` | `SearchPipeline` | Pure Python Orchestrator | `adapters/search/` | ✅ Implemented (SDD-04) |
 | `DefaultEntityResolutionStrategy` | `EntityResolutionStrategy` | Pure Python Orchestrator | `adapters/search/` | ✅ Implemented (SDD-04) |
 | `DefaultIngestionPipeline` | `IngestionPipeline` | Pure Python Orchestrator | `adapters/ingestion/` | ✅ Implemented (SDD-05) |
@@ -89,9 +89,11 @@ Orchestrates the full ingestion flow. This is a strategy port — the pipeline i
 - `complete`: returns `choices[0].message.content or ""`.
 - All `openai.OpenAIError` exceptions caught and re-raised as `LLMError` with `__cause__` chaining.
 
-**`OpenRouterProvider` implementation notes** (SDD-03):
-- Implements `LLMProvider` only (no embedding support). Uses `openai.OpenAI(base_url="https://openrouter.ai/api/v1")`.
+**`OpenRouterProvider` implementation notes** (SDD-03, embeddings added):
+- Implements both `LLMProvider` and `EmbeddingProvider`. Uses `openai.OpenAI(base_url="https://openrouter.ai/api/v1")`.
+- `embed` / `embed_batch`: single API call to `client.embeddings.create()`. Batch orders results by `.index`. Uses `embedding_model` parameter (default `"openai/text-embedding-3-large"`).
 - `extract_graph`: uses `response_format={"type": "json_object"}` then `json.loads()` + `_ExtractionResult.model_validate()`. Raises `LLMError` on `JSONDecodeError` or validation failure.
+- All `openai.OpenAIError` exceptions caught and re-raised as `LLMError` with `__cause__` chaining.
 - Pydantic models duplicated from OpenAI adapter (adapter-private by design — not shared).
 
 **`PostgresGraphRepository` implementation notes** (SDD-02):
@@ -131,7 +133,7 @@ Orchestrates the full ingestion flow. This is a strategy port — the pipeline i
 - `ingest(text, metadata=None)` → delegates to `_ingestion_pipeline.ingest(text, metadata)` — propagates all errors unchanged.
 - `search(query, top_n=5, depth_m=2, metadata_filter=None)` → delegates to `_search_pipeline.search(..., pipeline=None)` — `pipeline` param is intentionally not exposed.
 - `from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)`: `psycopg.connect(dsn)` → `PostgresGraphRepository(conn, graph_name, embedding_dimensions)` → `repo.initialize()` → single `OpenAIProvider` for both embed+llm → `instance._connection = conn`.
-- `from_openrouter(dsn, openai_api_key, openrouter_api_key, *, ...)`: same connection sequence; `OpenAIProvider` for embeddings only; `OpenRouterProvider` for LLM.
+- `from_openrouter(dsn, openrouter_api_key, *, openai_api_key=None, ...)`: same connection sequence. When `openai_api_key` is provided, uses `OpenAIProvider` for embeddings + `OpenRouterProvider` for LLM (mixed mode). When `openai_api_key` is absent, a single `OpenRouterProvider` serves as both LLM and embedding provider (OpenRouter-only mode).
 - Context manager: `__enter__` returns `self`; `__exit__` calls `close()`.
 
 Every port has at least one adapter. Every adapter implements at least one port. No orphan interfaces, no orphan implementations.
@@ -193,7 +195,7 @@ All async ABCs live in `src/depth_graph_search/core/ports/async_ports.py`.
 |---------|------------|------------|---------|--------|
 | `AsyncPostgresGraphRepository` | `AsyncGraphRepository` | psycopg.AsyncConnection + pgvector async | `adapters/postgres/` | ✅ Implemented (SDD-07, SDD-08 `health_check`) |
 | `AsyncOpenAIProvider` | `AsyncEmbeddingProvider`, `AsyncLLMProvider` | openai.AsyncOpenAI | `adapters/openai/` | ✅ Implemented (SDD-07) |
-| `AsyncOpenRouterProvider` | `AsyncLLMProvider` | openai.AsyncOpenAI + OpenRouter base_url | `adapters/openrouter/` | ✅ Implemented (SDD-07) |
+| `AsyncOpenRouterProvider` | `AsyncEmbeddingProvider`, `AsyncLLMProvider` | openai.AsyncOpenAI + OpenRouter base_url | `adapters/openrouter/` | ✅ Implemented (SDD-07, embeddings added) |
 | `AsyncDefaultSearchPipeline` | `AsyncSearchPipeline` | Pure Python Async Orchestrator | `adapters/search/` | ✅ Implemented (SDD-07, SDD-08 `list[ScoredNode]`) |
 | `AsyncDefaultEntityResolutionStrategy` | `AsyncEntityResolutionStrategy` | Pure Python Async Orchestrator | `adapters/search/` | ✅ Implemented (SDD-07) |
 | `AsyncDefaultIngestionPipeline` | `AsyncIngestionPipeline` | Pure Python Async Orchestrator | `adapters/ingestion/` | ✅ Implemented (SDD-07, SDD-08 `IngestionResult`) |

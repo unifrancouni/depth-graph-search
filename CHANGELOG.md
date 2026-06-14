@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (OpenRouter Embeddings Support)
+
+- **OpenRouter embeddings**: `OpenRouterProvider` and `AsyncOpenRouterProvider` now implement `EmbeddingProvider` / `AsyncEmbeddingProvider` with `embed()` + `embed_batch()` methods, using the OpenAI-compatible API at the OpenRouter endpoint
+- Three runtime configurations supported: OpenAI-only (unchanged), OpenRouter-only (NEW — no OpenAI key needed), Mixed (OpenAI for embeddings + OpenRouter for LLM — existing behavior preserved)
+- **484 total tests passing** (30 new tests + 454 pre-existing; 0 failed, 0 skipped)
+
+### Changed (OpenRouter Embeddings Support)
+
+- `GraphSearch.from_openrouter()` and `AsyncGraphSearch.from_openrouter()` — `openai_api_key` is now optional (keyword-only, default `None`); when absent, OpenRouter handles both LLM and embeddings
+- `OPENAI_API_KEY` environment variable is conditionally required — only needed when using `LLM_PROVIDER=openai` or when providing OpenAI for embeddings in mixed mode; not required when `LLM_PROVIDER=openrouter`
+- `api/config.py` and `cli/config.py` validators updated: `openai_api_key` field is now `Optional[str]` with conditional validation based on `llm_provider`
+- API lifespan and CLI wiring updated to pass `openai_api_key or None` to SDK factory classmethods
+
+---
+
 ### Added (SDD-09 — CLI Interface)
 
 - **SDD-09 — CLI Interface**: `dgs` command-line tool wrapping `GraphSearch` SDK for terminal-based ingestion and search — Typer + Rich + pydantic-settings; 92 new CLI tests — all 454 unit tests passing

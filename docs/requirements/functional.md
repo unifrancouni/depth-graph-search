@@ -154,7 +154,7 @@ depth-graph-search has eleven functional requirements spanning ingestion, search
 
 Convenience classmethods handle real-world wiring (connection creation, `repo.initialize()`, provider instantiation):
 - `GraphSearch.from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)`
-- `GraphSearch.from_openrouter(dsn, openai_api_key, openrouter_api_key, *, openrouter_model, embedding_model, graph_name, embedding_dimensions)`
+- `GraphSearch.from_openrouter(dsn, openrouter_api_key, *, openai_api_key=None, openrouter_model, embedding_model, graph_name, embedding_dimensions)` — when `openai_api_key` is provided, OpenAI handles embeddings (mixed mode); when absent, OpenRouter handles both LLM and embeddings
 
 > **v0.1 scope**: `ingest()` and `search()` are the primary entry points. The context manager pattern is the recommended usage. API (`api/`) and CLI (`cli/`) surfaces are still stubbed — deferred to SDD-07+.
 
@@ -275,7 +275,7 @@ Additional public interface:
 
 Async convenience classmethods handle real-world async wiring:
 - `AsyncGraphSearch.from_openai(dsn, api_key, *, model, embedding_model, graph_name, embedding_dimensions)` — async classmethod
-- `AsyncGraphSearch.from_openrouter(dsn, api_key, openai_api_key=None, *, ...)` — async classmethod
+- `AsyncGraphSearch.from_openrouter(dsn, openrouter_api_key, *, openai_api_key=None, ...)` — async classmethod; when `openai_api_key` is absent, OpenRouter handles both LLM and embeddings
 
 > **v0.1 scope**: Async stack is fully implemented end-to-end (SDD-07). Async parity fixed in SDD-08 — `ingest()` and `search()` now return the same types as the sync `GraphSearch` facade. No `asyncio.gather` parallelism yet — entity resolution and ingestion are sequential awaits. Connection pooling is deferred to a future SDD.
 

@@ -19,7 +19,7 @@ The fastest way is Docker Compose:
 ```bash
 git clone https://github.com/francougarte/depth-graph-search.git
 cd depth-graph-search
-cp .env.example .env          # fill in OPENAI_API_KEY (and DATABASE_URL if not using Docker)
+cp .env.example .env          # fill in API keys (OPENAI_API_KEY or OPENROUTER_API_KEY — see Configuration Reference)
 docker compose up -d          # starts postgres + api (port 8000)
 ```
 
@@ -86,15 +86,26 @@ with GraphSearch.from_openai(
 ```
 
 ```python
-# Option B: OpenRouter for LLM + OpenAI for embeddings
+# Option B: OpenRouter for LLM + OpenAI for embeddings (mixed mode)
 with GraphSearch.from_openrouter(
     dsn="postgresql://depth:depth@localhost:5432/depth_graph",
-    openai_api_key="sk-...",
     openrouter_api_key="sk-or-...",
+    openai_api_key="sk-...",           # optional — when provided, OpenAI handles embeddings
     openrouter_model="anthropic/claude-sonnet-4",
 ) as gs:
     gs.ingest("Alexander Fleming discovered penicillin in 1928.")
     nodes = gs.search("antibiotic discoveries")
+```
+
+```python
+# Option C: OpenRouter for BOTH LLM and embeddings (no OpenAI key needed)
+with GraphSearch.from_openrouter(
+    dsn="postgresql://depth:depth@localhost:5432/depth_graph",
+    openrouter_api_key="sk-or-...",
+    openrouter_model="anthropic/claude-sonnet-4",
+) as gs:
+    gs.ingest("Alan Turing proposed the Turing test in 1950.")
+    nodes = gs.search("Turing test")
 ```
 
 ### 4. Async usage
@@ -154,7 +165,16 @@ Configure via environment variables (or a `.env` file) — the same vars as the 
 
 ```bash
 export DATABASE_URL="postgresql://depth:depth@localhost:5432/depth_graph"
-export OPENAI_API_KEY="sk-..."
+export OPENAI_API_KEY="sk-..."       # optional when LLM_PROVIDER=openrouter (OpenRouter handles embeddings)
+```
+
+When using `LLM_PROVIDER=openrouter`, `OPENAI_API_KEY` is not required — OpenRouter can handle both LLM and embeddings:
+
+```bash
+export DATABASE_URL="postgresql://depth:depth@localhost:5432/depth_graph"
+export LLM_PROVIDER=openrouter
+export OPENROUTER_API_KEY="sk-or-..."
+# No OPENAI_API_KEY needed — OpenRouter handles embeddings too
 ```
 
 Then run:
@@ -224,8 +244,8 @@ When using the `dgs` CLI, configuration is read from environment variables (or a
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | **Yes** | — | PostgreSQL DSN |
-| `OPENAI_API_KEY` | **Yes** | — | OpenAI API key (used for embeddings always) |
-| `OPENROUTER_API_KEY` | No | `None` | Required when `LLM_PROVIDER=openrouter` |
+| `OPENAI_API_KEY` | Conditional | — | Required when `LLM_PROVIDER=openai`, or when using OpenAI for embeddings in mixed mode. Not required when `LLM_PROVIDER=openrouter` (OpenRouter handles embeddings). |
+| `OPENROUTER_API_KEY` | Conditional | `None` | Required when `LLM_PROVIDER=openrouter` |
 | `LLM_PROVIDER` | No | `openai` | `openai` or `openrouter` |
 | `LLM_MODEL` | No | `gpt-4o` | Chat completion model |
 | `EMBEDDING_MODEL` | No | `text-embedding-3-large` | Embedding model |
@@ -239,8 +259,8 @@ When running the HTTP API service, configuration is read from environment variab
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | **Yes** | — | PostgreSQL DSN (`postgresql://` or `postgresql+psycopg://`) |
-| `OPENAI_API_KEY` | **Yes** | — | OpenAI API key (used for embeddings always) |
-| `OPENROUTER_API_KEY` | No | `None` | Required when `LLM_PROVIDER=openrouter` |
+| `OPENAI_API_KEY` | Conditional | — | Required when `LLM_PROVIDER=openai`, or when using OpenAI for embeddings. Not required when `LLM_PROVIDER=openrouter` (OpenRouter handles embeddings). |
+| `OPENROUTER_API_KEY` | Conditional | `None` | Required when `LLM_PROVIDER=openrouter` |
 | `LLM_PROVIDER` | No | `openai` | `openai` or `openrouter` |
 | `LLM_MODEL` | No | `gpt-4o` | Chat completion model |
 | `EMBEDDING_MODEL` | No | `text-embedding-3-large` | Embedding model |
@@ -332,6 +352,15 @@ All three share the same core — no logic duplication.
 | Document | What you'll find |
 |----------|-----------------|
 | [ADR-001: PostgreSQL + AGE](docs/architecture/decisions/ADR-001-postgresql-age.md) | Why PostgreSQL over Neo4j, why OpenAI + OpenRouter |
+| [ADR-002: Clean Architecture](docs/architecture/decisions/ADR-002-clean-architecture.md) | Frozen dataclasses for entities, ABC ports, domain-side UUIDs |
+| [ADR-003: Dual LLM Providers](docs/architecture/decisions/ADR-003-dual-llm-providers.md) | OpenAI + OpenRouter adapters, Structured Outputs vs json_object |
+| [ADR-004: Hybrid Search Pipeline](docs/architecture/decisions/ADR-004-hybrid-search-pipeline.md) | BM25 + vector entry points, BFS graph traversal, rank-based scoring |
+| [ADR-005: Ingestion Pipeline](docs/architecture/decisions/ADR-005-ingestion-pipeline.md) | Pipeline-as-port, LLM extraction, entity resolution, edge rewiring |
+| [ADR-006: SDK Facade](docs/architecture/decisions/ADR-006-sdk-facade.md) | GraphSearch facade, port injection, factory classmethods, context manager |
+| [ADR-007: Mirrored Sync/Async](docs/architecture/decisions/ADR-007-async-architecture.md) | Full async mirror, duplication over abstraction, AsyncGraphSearch |
+| [ADR-008: HTTP API](docs/architecture/decisions/ADR-008-http-api.md) | FastAPI, pydantic-settings, lifespan pattern, app factory |
+| [ADR-009: CLI Interface](docs/architecture/decisions/ADR-009-cli-interface.md) | Typer + Rich, CLISettings, three output formats |
+| [ADR-010: OpenRouter Embeddings](docs/architecture/decisions/ADR-010-openrouter-embeddings.md) | Optional OpenAI key, three runtime configs |
 
 ### Requirements
 
